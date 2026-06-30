@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Viking Extension (starter)",
+  "version": "0.1.0",
+  "description": "Starter Manifest V3 extension. Build it out with Claude Code.",
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}
