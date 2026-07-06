@@ -1,22 +1,22 @@
 # Webcomic Tracker
 
-A Manifest V3 browser extension for Chrome and Edge that tracks webcomics you're reading — chapters, ratings, genres, and notes — with optional sync across devices via a private GitHub Gist.
+A Manifest V3 browser extension for Chrome and Edge. Tracks webcomics you're reading: chapters, ratings, genres, and notes. Optionally syncs across devices via a private GitHub Gist.
 
 ## Features
 
-- **Track any page** — save a URL as a comic with one click or `Alt+S`
-- **AsuraScans support** — auto-detects title, chapter number, and cover image
-- **Chapter history** — log every chapter you read with timestamps
-- **Update checks** — manually or automatically poll for new chapters
-- **Ratings & genres** — rate 1–10, tag with custom genres, write a review
-- **Gist sync** — backs up and syncs your list across devices via a private GitHub Gist
-- **Dark mode** — CSS-filter dark mode toggle per-tab or globally
-- **Key bindings** — bind keyboard keys to page elements (e.g. `→` for "Next chapter")
-- **New chapter badge** — extension icon shows unread chapter count
+- **Track any page**: save a URL with one click or `Alt+S`
+- **AsuraScans support**: auto-detects title, chapter number, and cover image
+- **Chapter history**: logs every chapter you read with timestamps
+- **Update checks**: poll for new chapters manually or on a schedule
+- **Ratings and genres**: rate 1-10, tag with custom genres, write a review
+- **Gist sync**: backs up your list to a private GitHub Gist, syncs across devices
+- **Dark mode**: CSS-filter toggle per tab or globally
+- **Key bindings**: bind keyboard keys to page elements (e.g. `]` for "Next chapter")
+- **Badge**: extension icon shows unread chapter count
 
 ## Installation
 
-No build step required.
+No build step.
 
 1. Download or clone this repo.
 2. Open `edge://extensions` (or `chrome://extensions`).
@@ -28,26 +28,25 @@ No build step required.
 
 ### Saving a comic
 
-- Navigate to a comic page and press **`Alt+S`**, or
-- Open the popup and click **Track**.
+Press `Alt+S` on any comic page, or open the popup and click **Track**.
 
-On AsuraScans the title and chapter are detected automatically. On any other site the page title and URL are saved.
+On AsuraScans the title and chapter are detected automatically. On other sites the page title and URL are saved.
 
 ### Checking for updates
 
-Click **Check for updates** in the popup footer. To check automatically, enable it in **Settings → Update Checks** and set an interval.
+Click **Check for updates** in the popup footer. For automatic checks, go to **Settings → Update Checks** and set an interval.
 
 ### Cloud sync (optional)
 
-1. Go to [github.com/settings/tokens](https://github.com/settings/tokens?type=beta) and create a fine-grained token with **Gists → Read and write** permission.
+1. Go to [github.com/settings/tokens](https://github.com/settings/tokens?type=beta) and create a fine-grained token with **Gists: Read and write** permission.
 2. Open the popup → **⚙ Settings** → paste the token → **Connect**.
 3. Repeat on other devices with the same token.
 
-Your data is stored in a **private** Gist. The token is stored in browser local storage — use a minimal-scope token.
+Data goes to a **private** Gist you own. The token stays in browser local storage; use a minimal-scope token.
 
 ### Keyboard element binding
 
-Open the popup → **⌨** → **Pick element on page**. Click any element on the page, then press the key to bind. The binding is stored per hostname.
+Open the popup → **⌨** → **Pick element on page**. Click the element you want, then press the key to bind. Bindings are stored per hostname.
 
 ## Permissions
 
@@ -63,7 +62,7 @@ Open the popup → **⌨** → **Pick element on page**. Click any element on th
 
 ## Privacy
 
-All data stays in your browser's local storage and optionally in your own private GitHub Gist. No data is sent to any third-party server.
+Data stays in your browser's local storage and optionally in a private GitHub Gist you own. Nothing goes to a third-party server.
 
 ## Architecture
 
