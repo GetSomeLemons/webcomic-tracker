@@ -4,6 +4,52 @@ const GIST_DESCRIPTION = "webcomic-tracker-data";
 const GIST_FILENAME = "webcomic-tracker.json";
 const ALARM_NAME = "update-check";
 
+// AsuraScans rotates a trailing hex suffix on slugs (e.g. "-30e93729"). Kept in
+// sync with the copy in content.js (and the inlined copy in scrapePageInline,
+// which can't reference this — it runs as a serialized, closure-free function).
+function stableSlug(slug) {
+  return slug.replace(/-[0-9a-f]{6,10}$/i, "");
+}
+
+// One-time-per-load migration: comics saved before the stable-id fix are keyed
+// by the full slug, suffix included, so fresh lookups by the new id miss them
+// and silently stop updating. Re-key any leftover old-style entry. Runs every
+// time the (ephemeral) service worker wakes — idempotent, cheap no-op once done.
+async function migrateAsuraIds() {
+  const { comics = {} } = await chrome.storage.local.get("comics");
+  let changed = false;
+  const next = {};
+  for (const [id, comic] of Object.entries(comics)) {
+    const newId = id.startsWith("asura__") ? `asura__${stableSlug(id.slice(7))}` : id;
+    if (newId === id) {
+      if (!next[id]) next[id] = comic;
+      continue;
+    }
+    changed = true;
+    next[newId] = next[newId] ? mergeComics(next[newId], { ...comic, id: newId }) : { ...comic, id: newId };
+  }
+  if (changed) await chrome.storage.local.set({ comics: next });
+}
+
+// Only reached if two old-style ids collapse onto the same stable id (e.g. the
+// same comic saved under two different rotations before this fix existed).
+function mergeComics(a, b) {
+  const newer = (a.lastVisited ?? "") >= (b.lastVisited ?? "") ? a : b;
+  const byChapter = new Map();
+  for (const h of [...(a.chapterHistory ?? []), ...(b.chapterHistory ?? [])]) {
+    const existing = byChapter.get(h.chapter);
+    if (!existing || h.visitedAt > existing.visitedAt) byChapter.set(h.chapter, h);
+  }
+  return {
+    ...a, ...b, ...newer,
+    lastChapter: Math.max(a.lastChapter ?? 0, b.lastChapter ?? 0),
+    chapterHistory: [...byChapter.values()].sort((x, y) => x.chapter - y.chapter),
+    addedAt: (a.addedAt ?? "") < (b.addedAt ?? "") ? a.addedAt : b.addedAt,
+  };
+}
+
+migrateAsuraIds().catch((e) => console.warn("Asura id migration failed:", e.message));
+
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
