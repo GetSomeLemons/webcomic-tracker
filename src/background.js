@@ -154,6 +154,7 @@ async function upsertComic(scraped) {
         hist.push({ chapter: scraped.chapter, visitedAt: now });
         hist.sort((a, b) => a.chapter - b.chapter);
       }
+      if (hist.length > 30) hist.splice(0, hist.length - 30);
       comics[id].chapterHistory = hist;
       // Always track the highest chapter visited, not just the most recent
       comics[id].lastChapter = Math.max(comics[id].lastChapter ?? 0, scraped.chapter);

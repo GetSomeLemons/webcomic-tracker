@@ -143,6 +143,7 @@ async function loadComics() {
   allComics = comics ?? {};
   renderList();
   renderGenreFilter();
+  updateGenreDatalist();
   renderUpdatesNotice();
 }
 
@@ -219,7 +220,14 @@ function renderGenreFilter() {
   const current = sel.value;
   const genres = [...new Set(Object.values(allComics).flatMap((c) => c.genres ?? []))].sort();
   sel.innerHTML = `<option value="">All genres</option>` +
-    genres.map((g) => `<option value="${esc(g)}"${g === current ? " selected" : ""}>${esc(g)}</option>`).join("");
+    genres.map((g) => `<option value="${esc(g)}"${g === current ? " selected" : ""}>${esc(toTitleCase(g))}</option>`).join("");
+}
+
+function updateGenreDatalist() {
+  const dl = document.getElementById("genre-datalist");
+  if (!dl) return;
+  const genres = [...new Set(Object.values(allComics).flatMap((c) => c.genres ?? []))].sort();
+  dl.innerHTML = genres.map((g) => `<option value="${esc(toTitleCase(g))}"></option>`).join("");
 }
 
 // ---------------------------------------------------------------------------
@@ -253,10 +261,14 @@ function renderChapterHistory(c) {
   const histEl = document.getElementById("chapter-history");
   if (hist.length) {
     histEl.innerHTML = `<div class="chapter-grid">` +
-      hist.map((h) =>
-        `<div class="chapter-grid-cell">Ch&nbsp;${h.chapter}<span class="chapter-date">${formatDateMD(h.visitedAt)}</span></div>`
-      ).join("") +
+      hist.map((h, i) => {
+        const url = i === 0 && c.lastChapterUrl ? c.lastChapterUrl : null;
+        return `<div class="chapter-grid-cell${url ? " chapter-grid-cell--link" : ""}"${url ? ` data-url="${esc(url)}"` : ""}>Ch&nbsp;${h.chapter}<span class="chapter-date">${formatDateMD(h.visitedAt)}</span></div>`;
+      }).join("") +
       `</div>`;
+    histEl.querySelectorAll(".chapter-grid-cell--link").forEach((el) => {
+      el.addEventListener("click", () => chrome.tabs.create({ url: el.dataset.url }));
+    });
   } else {
     histEl.innerHTML = `<div style="font-size:11px;color:var(--text-muted)">No chapters saved yet</div>`;
   }
@@ -309,7 +321,7 @@ function renderRating(current) {
 function renderGenreTags(genres) {
   const row = document.getElementById("genre-tags");
   row.innerHTML = genres.map((g) =>
-    `<span class="genre-tag">${esc(g)}<button class="genre-remove" data-g="${esc(g)}">×</button></span>`
+    `<span class="genre-tag">${esc(toTitleCase(g))}<button class="genre-remove" data-g="${esc(g)}">×</button></span>`
   ).join("");
   row.querySelectorAll(".genre-remove").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -321,10 +333,11 @@ function renderGenreTags(genres) {
 
 function addGenre() {
   const input = document.getElementById("genre-input");
-  const val = input.value.trim().toLowerCase();
-  if (!val || allComics[currentId].genres?.includes(val)) { input.value = ""; return; }
+  const val = toTitleCase(input.value.trim());
+  if (!val || allComics[currentId].genres?.some((g) => toTitleCase(g) === val)) { input.value = ""; return; }
   allComics[currentId].genres = [...(allComics[currentId].genres ?? []), val];
   renderGenreTags(allComics[currentId].genres);
+  updateGenreDatalist();
   input.value = "";
 }
 
@@ -495,6 +508,10 @@ function formatDateMD(iso) {
   if (!iso) return "";
   const d = new Date(iso);
   return `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function toTitleCase(str) {
+  return String(str ?? "").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function esc(str) {
