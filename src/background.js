@@ -109,8 +109,11 @@ function scrapePageInline() {
   ].find((e) => e?.textContent?.trim());
   const rawTitle = titleEl?.textContent.trim() || document.title.replace(/\s+[-–—|·].*$/, "").trim();
   const title = rawTitle.replace(/\s+chapter\s*\d+.*/i, "").trim();
+  // AsuraScans rotates a trailing hex suffix on slugs (e.g. "-30e93729") — strip
+  // it so the id stays stable across the rotation (see content.js stableSlug).
+  const stableSlugPart = slug.replace(/-[0-9a-f]{6,10}$/i, "");
   return {
-    id: `asura__${slug}`, title, chapter,
+    id: `asura__${stableSlugPart}`, title, chapter,
     url: location.href, indexUrl: `https://asurascans.com/${pathType}/${slug}/`, site: "asurascans.com",
     ...(!chapterMatch && { coverUrl: document.querySelector('meta[property="og:image"]')?.content ?? null }),
   };
@@ -161,6 +164,9 @@ async function upsertComic(scraped) {
     }
     comics[id].lastChapterUrl = scraped.url;
     comics[id].lastVisited = now;
+    // Self-heal the index URL: AsuraScans' slug suffix rotates over time, so
+    // any fresh visit should replace a now-stale stored URL with the current one.
+    if (scraped.indexUrl) comics[id].url = scraped.indexUrl;
     // Persist user-editable fields when coming from the Save button (not from scraping)
     if (scraped.rating !== undefined) comics[id].rating = scraped.rating;
     if (scraped.review !== undefined) comics[id].review = scraped.review;
@@ -483,6 +489,7 @@ async function handleMessage(msg) {
         comics[msg.id].newChapters = Math.max(0, msg.latestChapter - (comics[msg.id].lastChapter ?? 0));
       }
       if (msg.coverUrl) comics[msg.id].coverUrl = msg.coverUrl;
+      if (msg.url) comics[msg.id].url = msg.url;
       await chrome.storage.local.set({ comics });
       await updateBadge();
       return { ok: true };

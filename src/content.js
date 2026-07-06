@@ -8,6 +8,13 @@
 const ASURA_CHAPTER_RE = /asurascans\.com\/(manga|comics)\/([^/]+)\/chapter[/-](\d+)/i;
 const ASURA_INDEX_RE = /asurascans\.com\/(manga|comics)\/([^/]+)\/?$/i;
 
+// AsuraScans appends a rotating hex suffix to slugs (e.g. "-30e93729") that
+// changes periodically, presumably to break saved links/scrapers. Strip it so
+// the same comic keeps one stable storage id across the rotation.
+function stableSlug(slug) {
+  return slug.replace(/-[0-9a-f]{6,10}$/i, "");
+}
+
 function scrapeAsura() {
   const chapterMatch = location.href.match(ASURA_CHAPTER_RE);
   const indexMatch = location.href.match(ASURA_INDEX_RE);
@@ -24,7 +31,7 @@ function scrapeAsura() {
   const rawTitle = titleEl?.textContent.trim() || document.title.replace(/\s+[-–—|·].*$/, "").trim();
   const title = rawTitle.replace(/\s+chapter\s*\d+.*/i, "").trim();
   return {
-    id: `asura__${slug}`, title, slug, chapter,
+    id: `asura__${stableSlug(slug)}`, title, slug, chapter,
     url: location.href, indexUrl: `https://asurascans.com/${pathType}/${slug}/`, site: "asurascans.com",
     // Only grab cover from the index page; chapter pages may have a different og:image
     ...(!chapterMatch && { coverUrl: document.querySelector('meta[property="og:image"]')?.content ?? null }),
@@ -315,7 +322,7 @@ _navObserver.observe(document.body, { childList: true, subtree: true });
   const indexMatch = location.href.match(ASURA_INDEX_RE);
   if (!indexMatch) return;
   const slug = indexMatch[2];
-  const id = `asura__${slug}`;
+  const id = `asura__${stableSlug(slug)}`;
   const { comics = {} } = await chrome.storage.local.get("comics");
   if (!comics[id]) return;
 
@@ -324,10 +331,14 @@ _navObserver.observe(document.body, { childList: true, subtree: true });
     .filter((n) => n !== null);
   const latestChapter = nums.length ? Math.max(...nums) : null;
   const coverUrl = document.querySelector('meta[property="og:image"]')?.content ?? null;
+  // Rebuild the index URL from the *current* slug so a rotated suffix self-heals
+  // the stored bookmark the next time the user visits, instead of staying stale.
+  const freshUrl = `https://asurascans.com/${indexMatch[1]}/${slug}/`;
 
   const chapterUnchanged = latestChapter === null || latestChapter === comics[id].latestChapter;
   const coverUnchanged = !coverUrl || coverUrl === comics[id].coverUrl;
-  if (chapterUnchanged && coverUnchanged) return;
+  const urlUnchanged = freshUrl === comics[id].url;
+  if (chapterUnchanged && coverUnchanged && urlUnchanged) return;
 
-  chrome.runtime.sendMessage({ type: "UPDATE_LATEST_CHAPTER", id, latestChapter, coverUrl }).catch(() => {});
+  chrome.runtime.sendMessage({ type: "UPDATE_LATEST_CHAPTER", id, latestChapter, coverUrl, url: freshUrl }).catch(() => {});
 })();
