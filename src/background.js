@@ -516,6 +516,9 @@ async function handleMessage(msg) {
       await updateBadge();
       return { ok: true };
     }
+    case "PULL_FROM_GIST":
+      await pullFromGist();
+      return { ok: true };
     case "PING":
       return { pong: true };
     case "DEBUG_INFO": {

@@ -121,6 +121,7 @@ async function checkSyncStatus() {
   const { settings = {} } = await chrome.storage.local.get("settings");
   if (!settings.githubPat) {
     document.getElementById("notice-sync").style.display = "";
+    document.getElementById("btn-pull").style.display = "none";
   }
 }
 
@@ -458,6 +459,16 @@ function bindEvents() {
     await loadComics();
     updateLastChecked();
     btn.textContent = "Check for updates";
+  });
+
+  document.getElementById("btn-pull").addEventListener("click", async () => {
+    const btn = document.getElementById("btn-pull");
+    btn.textContent = "Syncing…";
+    btn.disabled = true;
+    await chrome.runtime.sendMessage({ type: "PULL_FROM_GIST" });
+    await loadComics();
+    btn.textContent = "↓ Sync";
+    btn.disabled = false;
   });
 
   document.getElementById("btn-save").addEventListener("click", async () => {
