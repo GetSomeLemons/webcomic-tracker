@@ -101,3 +101,4 @@ Manual: popup "Check for updates" → CHECK_UPDATES (always available)
 - `content_scripts` with `<all_urls>` does not require broad host permissions (injection only, no fetch).
 - PAT is stored as plaintext in `chrome.storage.local`. Use a fine-grained Gist-scoped token.
 - AsuraScans DOM selectors may change. A selector array is used; first match wins.
+- AsuraScans uses Next.js SPA routing. `autoTrack()` detects URL changes via `MutationObserver` to handle client-side chapter navigation without a full page reload.
