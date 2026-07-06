@@ -7,37 +7,38 @@ related: [architecture-extension-overview]
 context_keys: [manifest.json, src/]
 audience: [developer, ai]
 level: beginner
-status: draft
+status: current
 since: "2026-07"
 ---
 
 # Getting Started
 
-## Vaatimukset
+## Requirements
 
-- Chrome tai Edge (selain Developer mode päällä)
-- Kehitys tapahtuu `viking-claude-code`-kontin sisällä (VS Code dev container)
+- Chrome or Edge with Developer mode enabled
+- Development runs inside the `viking-claude-code` container (VS Code dev container)
 
-## Laajennuksen lataaminen
+## Loading the Extension
 
-Ei build-askelta. Extensio ladataan suoraan `src/`-kansiosta.
+No build step. The extension loads directly from `src/`.
 
-1. Avaa `edge://extensions` (tai `chrome://extensions`)
-2. Ota "Developer mode" käyttöön
-3. "Load unpacked" → valitse `/workspace/src/`
-4. Muutosten jälkeen paina laajennuskortin reload-kuvaketta
+1. Open `edge://extensions` (or `chrome://extensions`)
+2. Enable **Developer mode**
+3. Click **Load unpacked** and select `/workspace/src/`
+4. After any change, click the reload icon on the extension card
 
-## GitHub Gist -synkronointi (valinnainen)
+## GitHub Gist Sync (optional)
 
-1. Luo GitHub Personal Access Token, scopes: `gist`
-2. Avaa extensio → hammasratas (⚙) → asetukset
-3. Liitä PAT → "Yhdistä" → Gist-URL ilmestyy onnistuessa
+1. Create a GitHub Personal Access Token with **Gists (read+write)** scope
+2. Open the extension popup → **Settings**
+3. Paste the PAT → **Connect** → the Gist URL appears on success
 
-## Kehitysympäristö (kontti)
+## Dev Environment
 
-VS Code dev container käynnistyy automaattisesti kun avaat kansion VS Codessa ja valitset "Reopen in Container".
+The VS Code dev container starts automatically when you open the folder and select "Reopen in Container".
 
-Ilman dev containeria (PowerShell):
+Without the dev container (PowerShell):
+
 ```powershell
 wslc run -it --rm -v "$($PWD.Path):/workspace" ghcr.io/getsomelemons/viking-claude-code:latest claude
 ```

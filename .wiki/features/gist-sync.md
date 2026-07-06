@@ -7,22 +7,22 @@ related: [architecture-extension-overview]
 context_keys: [background.js, syncToGist, pullFromGist, gistInit, GIST_INIT, GIST_FILENAME]
 audience: [developer, ai]
 level: intermediate
-status: draft
+status: current
 since: "2026-07"
 ---
 
 # GitHub Gist Sync
 
-Kaikki webcomic-data synkronoidaan yksityiseen GitHub Gistiin jotta se on saatavilla eri laitteilta ja selainprofiileilta. Synkkaukseen tarvitaan Personal Access Token.
+All comic data syncs to a private GitHub Gist, making it available across devices and browser profiles. A Personal Access Token is required.
 
-## Setup (käyttäjän näkökulmasta)
+## Setup
 
-1. Luo GitHub PAT: Settings → Developer settings → Tokens → Fine-grained token, scope: **Gists (read+write)**
-2. Options-sivulla: liitä PAT → "Connect" → Gist luodaan tai löydetään automaattisesti
+1. Create a GitHub PAT: Settings → Developer settings → Tokens → Fine-grained token, scope: **Gists (read+write)**
+2. In the options page: paste the PAT → "Connect" → a Gist is created or found automatically
 
 ## Gist Payload
 
-Gistissä on yksi tiedosto `webcomic-tracker.json`:
+The Gist contains one file, `webcomic-tracker.json`:
 
 ```json
 {
@@ -38,25 +38,25 @@ Gistissä on yksi tiedosto `webcomic-tracker.json`:
 }
 ```
 
-`githubPat` ja `gistId` **eivät** sisälly payloadiin — ne ovat synkkauksen tunnistetietoja itse.
+`githubPat` and `gistId` are not included in the payload; they are the sync credentials themselves.
 
 ## Functions (background.js)
 
-| Funktio | Milloin kutsutaan | Kuvaus |
-|---------|------------------|--------|
-| `gistInit(pat)` | options: GIST_INIT | Etsii olemassaolevan Gistin tai luo uuden, palauttaa gistId |
-| `syncToGist()` | jokaisen UPSERT/REMOVE jälkeen | PATCH → ylikirjoittaa Gistin paikallisella datalla |
-| `pullFromGist()` | chrome.runtime.onStartup | GET → merge remote data paikalliseen |
+| Function | When called | Description |
+|----------|-------------|-------------|
+| `gistInit(pat)` | options: GIST_INIT | Finds an existing Gist or creates a new one, returns gistId |
+| `syncToGist()` | after every UPSERT/REMOVE | PATCH overwrites the Gist with local data |
+| `pullFromGist()` | chrome.runtime.onStartup | GET merges remote data into local storage |
 
 ## Merge Strategy
 
-`pullFromGist()` käyttää timestamp-pohjaista yhdistämistä:
-- Remote voittaa (uudet sarjat otetaan mukaan)
-- Lokaali voittaa jos `lastVisited` on uudempi kuin remote (käyttäjä on lukenut tällä laitteella)
+`pullFromGist()` uses timestamp-based merging:
+- Remote wins; new comics are pulled in.
+- Local wins if `lastVisited` is newer than remote (user has read on this device).
 
 ## Gotchas
 
-- PAT tallennetaan salaamattomana `chrome.storage.local`:ssa — suositellaan fine-grained PAT pelkästään Gist-scopella
-- Gist-koko rajoittuu ~1 MB:iin (n. 1000 sarjaa); ylitys näkyy 422-virheenä consolessa
-- Kaikki sync-operaatiot ovat fire-and-forget: virheet lokitetaan consoleen, eivät näy käyttäjälle (v1)
-- Gist-haku hakee max 100 Gistia (`?per_page=100`) — jos käyttäjällä on yli 100 Gistia, voi ohittaa trackerin
+- PAT is stored unencrypted in `chrome.storage.local`. Use a fine-grained Gist-scoped token.
+- Gist size is limited to ~1 MB (roughly 1000 comics). Overflow shows as a 422 error in the console.
+- All sync operations are fire-and-forget. Errors are logged to the console, not shown to the user.
+- The Gist list fetch retrieves max 100 Gists (`?per_page=100`). If the user has more than 100 Gists, the tracker's Gist may be missed.
