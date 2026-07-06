@@ -14,6 +14,7 @@ Map from code areas to documentation articles.
 |---------|--------|
 | `dark-mode.md` | CSS-filter dark mode injection, toggle logic |
 | `gist-sync.md` | GitHub Gist sync, data payload, merge strategy |
+| `popup-detail.md` | Detail panel: chapter history link, genre Title Case, autocomplete |
 
 ## api/
 
