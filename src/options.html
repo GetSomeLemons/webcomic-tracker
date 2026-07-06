@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Webcomic Tracker — Settings</title>
+    <style>
+      :root {
+        --bg: #1a1a1e;
+        --surface: #26262c;
+        --border: #3a3a44;
+        --text: #e8e8ee;
+        --muted: #888;
+        --accent: #4a9eff;
+        --accent-hover: #2d86ff;
+        --ok: #4caf50;
+        --err: #f44336;
+        --warn-bg: #2a2000;
+        --warn-border: #665500;
+      }
+      * { box-sizing: border-box; }
+      body {
+        font-family: system-ui, sans-serif; font-size: 13px;
+        max-width: 520px; margin: 0 auto; padding: 32px 20px;
+        background: var(--bg); color: var(--text);
+      }
+      h1 { font-size: 18px; margin-bottom: 4px; }
+      .subtitle { color: var(--muted); font-size: 12px; margin-bottom: 28px; }
+      .subtitle a { color: var(--accent); }
+      .section { margin-bottom: 28px; }
+      .section-title { font-size: 11px; font-weight: 600; text-transform: uppercase;
+        letter-spacing: .05em; color: var(--muted); margin-bottom: 12px; }
+      .field-group { margin-bottom: 14px; }
+      label { display: block; font-weight: 500; margin-bottom: 5px; font-size: 12px; }
+      input[type=text], input[type=password], input[type=number] {
+        width: 100%; padding: 7px 10px;
+        border: 1px solid var(--border); border-radius: 5px;
+        background: var(--surface); color: var(--text); font-size: 13px;
+      }
+      input:focus { outline: none; border-color: var(--accent); }
+      .help { font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.5; }
+      .help a { color: var(--accent); }
+      .warn-box {
+        background: var(--warn-bg); border: 1px solid var(--warn-border);
+        border-radius: 5px; padding: 10px 12px; font-size: 12px;
+        color: #c8a040; margin-bottom: 12px; line-height: 1.5;
+      }
+      .btn {
+        padding: 7px 16px; border-radius: 5px; font-size: 13px; cursor: pointer;
+        border: 1px solid var(--accent); background: var(--accent);
+        color: #fff; font-weight: 500; transition: background 0.15s;
+      }
+      .btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+      .status { font-size: 12px; margin-top: 6px; min-height: 16px; }
+      .status.ok { color: var(--ok); }
+      .status.err { color: var(--err); }
+      .divider { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+      .row { display: flex; align-items: center; gap: 8px; }
+      .row input { flex: 1; }
+      .shortcut-info {
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: 5px; padding: 10px 12px; font-size: 12px; color: var(--text);
+        line-height: 1.6;
+      }
+      .shortcut-info a { color: var(--accent); }
+      kbd {
+        background: var(--border); border-radius: 3px;
+        padding: 1px 5px; font-size: 11px; font-family: monospace;
+      }
+      .checkbox-row { display: flex; align-items: center; gap: 8px; }
+      .checkbox-row input[type=checkbox] { width: auto; }
+    </style>
+  </head>
+  <body>
+    <h1>Settings</h1>
+    <p class="subtitle">
+      Webcomic Tracker · <a href="help.html" target="_blank">Help &amp; setup guide ↗</a>
+    </p>
+
+    <div class="section">
+      <div class="section-title">GitHub Gist Sync</div>
+      <div class="warn-box">
+        ⚠ PAT is stored unencrypted in browser storage.
+        Use a fine-grained token scoped only to <strong>Gists (read + write)</strong>.
+        Basic tracking works without this — sync is optional.
+      </div>
+      <div class="field-group">
+        <label for="pat">Personal Access Token</label>
+        <div class="row">
+          <input type="password" id="pat" placeholder="ghp_…" autocomplete="off" />
+          <button class="btn" id="btn-connect">Connect</button>
+        </div>
+        <div class="help">
+          Creates or connects to a private Gist named <em>webcomic-tracker-data</em>.
+          Data syncs across devices when you set up the same token.
+        </div>
+        <div class="status" id="gist-status"></div>
+        <a id="gist-link" href="#" target="_blank" style="font-size:11px;color:var(--accent);display:none">Open Gist ↗</a>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Keyboard Shortcut</div>
+      <div class="shortcut-info">
+        Default shortcut: <kbd>Alt+S</kbd> — save current comic page.<br>
+        If it doesn't work, configure it at
+        <a href="edge://extensions/shortcuts" target="_blank">edge://extensions/shortcuts</a>
+        (or <a href="chrome://extensions/shortcuts" target="_blank">chrome://extensions/shortcuts</a>).
+        <br><br>
+        The page must be reloaded if the extension was installed after opening it.
+        Also works without shortcut — use the <strong>Track</strong> button in the popup.
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Update Checks</div>
+      <div class="field-group">
+        <label class="checkbox-row">
+          <input type="checkbox" id="auto-update" />
+          Automatically check for new chapters
+        </label>
+        <div class="help">Off by default. Manual checks via "Check for updates" always work.</div>
+      </div>
+      <div class="field-group">
+        <label for="interval">Check interval (minutes)</label>
+        <input type="number" id="interval" min="10" max="1440" value="60" style="width:100px" />
+        <div class="help">How often to poll asurascans.com for new chapters.</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Appearance</div>
+      <div class="field-group">
+        <label class="checkbox-row">
+          <input type="checkbox" id="dark-global" />
+          Enable dark mode on all pages globally
+        </label>
+      </div>
+    </div>
+
+    <button class="btn" id="btn-save">Save settings</button>
+    <div class="status" id="save-status"></div>
+
+    <script src="options.js"></script>
+  </body>
+</html>

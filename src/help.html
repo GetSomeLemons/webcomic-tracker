@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Webcomic Tracker — Help</title>
+    <style>
+      :root {
+        --bg: #1a1a1e; --surface: #26262c; --border: #3a3a44;
+        --text: #e8e8ee; --muted: #888; --accent: #4a9eff;
+      }
+      * { box-sizing: border-box; }
+      body {
+        font-family: system-ui, sans-serif; font-size: 14px; line-height: 1.65;
+        max-width: 640px; margin: 0 auto; padding: 40px 24px;
+        background: var(--bg); color: var(--text);
+      }
+      h1 { font-size: 22px; margin-bottom: 4px; }
+      .subtitle { color: var(--muted); margin-bottom: 40px; font-size: 13px; }
+      h2 { font-size: 15px; margin: 32px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+      h3 { font-size: 13px; color: var(--muted); margin: 16px 0 4px; text-transform: uppercase; letter-spacing: .04em; }
+      p { margin: 0 0 10px; }
+      ol, ul { padding-left: 20px; margin: 0 0 10px; }
+      li { margin-bottom: 4px; }
+      a { color: var(--accent); }
+      kbd {
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: 3px; padding: 1px 6px; font-size: 12px; font-family: monospace;
+      }
+      .step {
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: 6px; padding: 14px 16px; margin-bottom: 10px;
+      }
+      .step strong { display: block; margin-bottom: 4px; }
+      .tag {
+        display: inline-block; font-size: 11px; padding: 1px 7px;
+        border-radius: 10px; background: var(--surface); border: 1px solid var(--border);
+        color: var(--muted); margin-bottom: 6px;
+      }
+      .tag.optional { border-color: #665500; color: #c8a040; background: #1c1600; }
+    </style>
+  </head>
+  <body>
+    <h1>Webcomic Tracker — Help</h1>
+    <p class="subtitle">Quick guide to getting everything working.</p>
+
+    <!-- ------------------------------------------------------------------ -->
+    <h2>Saving a comic page</h2>
+
+    <p>The extension works on any web page — no setup required.</p>
+
+    <div class="step">
+      <strong>Option 1 — Track button (always works)</strong>
+      Open the popup (click the extension icon) and press <strong>Track</strong>.
+      The current page is saved with its title and URL. Chapter number is detected automatically on asurascans.com.
+    </div>
+
+    <div class="step">
+      <strong>Option 2 — Keyboard shortcut <kbd>Alt+S</kbd></strong>
+      Works on any tab. If pressing <kbd>Alt+S</kbd> does nothing, follow the steps below.
+    </div>
+
+    <h3>Fixing Alt+S</h3>
+    <ol>
+      <li>Go to <a href="edge://extensions/shortcuts" target="_blank">edge://extensions/shortcuts</a>
+          (Edge) or <code>chrome://extensions/shortcuts</code> (Chrome).</li>
+      <li>Find <strong>Webcomic Tracker</strong> and set the shortcut for "Save or update this comic page".</li>
+      <li>If the page was open before the extension was installed, <strong>refresh the tab</strong>.</li>
+    </ol>
+
+    <!-- ------------------------------------------------------------------ -->
+    <h2>Keyboard element binding (⌨)</h2>
+
+    <p>Bind any button on any page to a keyboard key — for example, bind <kbd>→</kbd> to "Next chapter".</p>
+    <ol>
+      <li>Open the popup and click <strong>⌨</strong> (top right).</li>
+      <li>Click <strong>🎯 Pick element on page</strong> — the popup closes.</li>
+      <li>The page dims. Hover over the element you want to bind (e.g. "Next ›"). It lights up in blue.</li>
+      <li>Click it.</li>
+      <li>Press the key you want to bind (e.g. <kbd>]</kbd> or <kbd>ArrowRight</kbd>).</li>
+      <li>A confirmation toast appears. The binding is now active on this site.</li>
+    </ol>
+    <p>Manage or delete bindings from the ⌨ view in the popup.</p>
+
+    <!-- ------------------------------------------------------------------ -->
+    <h2>Cloud sync <span class="tag optional">optional</span></h2>
+
+    <p>Your comic list syncs to a private GitHub Gist. Set it up once and your data follows you across devices.</p>
+
+    <h3>Step 1 — Create a GitHub Personal Access Token</h3>
+    <ol>
+      <li>Go to <a href="https://github.com/settings/tokens?type=beta" target="_blank">github.com/settings/tokens</a>.</li>
+      <li>Click <strong>Generate new token</strong> → Fine-grained token.</li>
+      <li>Set expiry as desired. Under <strong>Account permissions</strong>, set <strong>Gists → Read and write</strong>.</li>
+      <li>Click <strong>Generate token</strong> and copy the token (starts with <code>github_pat_…</code>).</li>
+    </ol>
+
+    <h3>Step 2 — Connect in Settings</h3>
+    <ol>
+      <li>Open the popup → <strong>⚙</strong> → Settings.</li>
+      <li>Paste the token into <strong>Personal Access Token</strong>.</li>
+      <li>Click <strong>Connect</strong>. A Gist is created (or an existing one is found).</li>
+      <li>Repeat on other devices/profiles with the same token.</li>
+    </ol>
+
+    <!-- ------------------------------------------------------------------ -->
+    <h2>Dark mode</h2>
+    <p>
+      Click <strong>🌙</strong> in the popup to toggle dark mode on the current tab.
+      To enable it globally on all pages, go to Settings → <em>Enable dark mode on all pages globally</em>.
+    </p>
+    <p>
+      Uses a CSS filter (<code>invert + hue-rotate</code>). Comic images are double-inverted so they display normally.
+      Not every site will look perfect — it covers ~95% of cases.
+    </p>
+  </body>
+</html>

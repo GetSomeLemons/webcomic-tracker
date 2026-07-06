@@ -1,12 +1,43 @@
 {
   "manifest_version": 3,
-  "name": "Viking Extension (starter)",
-  "version": "0.1.0",
-  "description": "Starter Manifest V3 extension. Build it out with Claude Code.",
+  "name": "Webcomic Tracker",
+  "version": "1.2.0",
+  "description": "Track webcomics, chapters, ratings, and genres. Syncs via GitHub Gist.",
   "action": {
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "64": "icons/icon-64.png",
+      "128": "icons/icon-128.png"
+    }
   },
   "background": {
     "service_worker": "background.js"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": ["storage", "alarms", "activeTab", "scripting", "tabs"],
+  "host_permissions": [
+    "https://api.github.com/*",
+    "https://asurascans.com/*"
+  ],
+  "commands": {
+    "save-comic": {
+      "suggested_key": { "default": "Alt+S" },
+      "description": "Save or update this comic page"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "64": "icons/icon-64.png",
+    "128": "icons/icon-128.png"
   }
 }

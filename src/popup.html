@@ -2,11 +2,139 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <style>
-      body { width: 220px; font-family: system-ui, sans-serif; padding: 12px; }
-    </style>
+    <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <p>Viking Extension starter. Ask Claude Code to build this out.</p>
+    <!-- List view -->
+    <div id="view-list">
+      <div class="header">
+        <span>Webcomic Tracker</span>
+        <div class="header-actions">
+          <button class="btn-icon btn-track" id="btn-track" title="Track this page">Track</button>
+          <button class="btn-icon" id="btn-dark" title="Toggle dark mode on this tab">🌙</button>
+          <button class="btn-icon" id="btn-bindings" title="Key bindings for this site">⌨</button>
+          <button class="btn-icon" id="btn-options" title="Settings">⚙</button>
+        </div>
+      </div>
+
+      <!-- Notices (hidden by default) -->
+      <div id="notice-restricted" class="notice notice-warn" style="display:none">
+        ⚠ Can't save: open a web page first.
+      </div>
+      <div id="notice-sync" class="notice notice-info" style="display:none">
+        ☁ Sync not configured ·
+        <button class="btn-notice-link" id="btn-setup-sync">Set up</button>
+        · <a class="btn-notice-link" href="help.html" target="_blank">Help</a>
+      </div>
+
+      <!-- New chapter alerts (hidden until updates found) -->
+      <div id="notice-updates" style="display:none">
+        <div class="updates-header">
+          <span>New chapters</span>
+          <button class="btn-link" id="btn-ack-all">Mark all seen</button>
+        </div>
+        <div id="updates-list"></div>
+      </div>
+
+      <div class="filters">
+        <input type="search" id="search" placeholder="Search…" />
+        <select id="genre-filter">
+          <option value="">All genres</option>
+        </select>
+      </div>
+
+      <div class="comic-list" id="comic-list">
+        <div class="empty">No comics saved yet.<br>Press Alt+S or Track on a comic page.</div>
+      </div>
+
+      <div class="footer">
+        <button class="btn-link" id="btn-check">Check for updates</button>
+        <span id="footer-right">
+          <span id="last-checked"></span>
+          <button class="btn-icon" id="btn-theme" title="Toggle popup theme" style="font-size:12px;padding:1px 4px">☀</button>
+          <span id="version-badge" class="version-badge"></span>
+          <button class="btn-icon" id="btn-debug" title="Debug panel" style="font-size:11px;padding:1px 5px">🐛</button>
+        </span>
+      </div>
+    </div>
+
+    <!-- Debug panel (outside views, always at bottom) -->
+    <div id="debug-panel">
+      <div class="debug-row"><span class="debug-key">Active tab:</span><span class="debug-val" id="dbg-tab">…</span></div>
+      <div class="debug-row"><span class="debug-key">Service worker:</span><span class="debug-val" id="dbg-bg">…</span></div>
+      <div class="debug-row"><span class="debug-key">Content script:</span><span class="debug-val" id="dbg-cs">…</span></div>
+      <div class="debug-row"><span class="debug-key"><kbd>Alt+S</kbd> shortcut:</span><span class="debug-val" id="dbg-shortcut">…</span></div>
+      <div class="debug-row"><span class="debug-key">Comics stored:</span><span class="debug-val" id="dbg-comics">…</span></div>
+      <div class="debug-row"><span class="debug-key">Cloud sync:</span><span class="debug-val" id="dbg-sync">…</span></div>
+      <div class="debug-actions">
+        <a href="edge://extensions/shortcuts" class="btn-link" style="font-size:10px">Fix shortcut ↗</a>
+        <a href="help.html" target="_blank" class="btn-link" style="font-size:10px">Help ↗</a>
+      </div>
+    </div>
+
+    <!-- Detail / edit view -->
+    <div id="view-detail" class="detail">
+      <button class="detail-back" id="btn-back">← Back</button>
+      <div class="detail-header-row">
+        <img id="detail-cover" class="detail-cover" style="display:none" alt="">
+        <div class="detail-header-text">
+          <div class="detail-title" id="detail-title"></div>
+          <div class="detail-site" id="detail-site"></div>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">Rating</div>
+        <div class="rating-row" id="rating-row"></div>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">Genres</div>
+        <div class="genre-row" id="genre-tags"></div>
+        <div class="genre-add-row">
+          <input class="genre-input" id="genre-input" placeholder="Add genre…" />
+          <button class="btn-link" id="btn-add-genre">Add</button>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">Review</div>
+        <textarea id="review-text" placeholder="Your thoughts…" rows="3"></textarea>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">Read chapters</div>
+        <div id="chapter-history"></div>
+        <div class="rewind-row">
+          <input type="number" id="rewind-input" class="rewind-input" placeholder="Ch #" min="0" step="1">
+          <button class="btn-rewind" id="btn-rewind">Rewind</button>
+        </div>
+        <div id="latest-chapter-row" class="chapter-row" style="display:none;margin-top:6px">
+          <span style="font-size:11px;color:var(--text-muted)">Latest:</span>
+          <span id="chapter-latest"></span>
+          <button class="btn-open" id="btn-open-latest">Open</button>
+        </div>
+      </div>
+
+      <div class="detail-actions">
+        <button class="btn-primary" id="btn-save">Save</button>
+        <button class="btn-danger" id="btn-remove">Remove</button>
+      </div>
+    </div>
+
+    <!-- Key bindings view -->
+    <div id="view-bindings" style="display:none">
+      <div class="header">
+        <button class="detail-back" id="btn-bindings-back" style="padding:0">← Back</button>
+        <span id="bindings-host" style="font-size:11px;color:var(--text-muted)"></span>
+      </div>
+      <div id="bindings-list" class="bindings-list"></div>
+      <div class="footer">
+        <button class="btn-link" id="btn-pick">🎯 Pick element on page</button>
+        <span style="font-size:10px;color:var(--text-muted)">popup closes</span>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
   </body>
 </html>
