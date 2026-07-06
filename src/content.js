@@ -283,7 +283,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 // Auto-track: when navigating to a chapter page, update known comics silently
-(async function autoTrack() {
+async function autoTrack() {
   const scraped = scrapeAsura();
   if (!scraped || scraped.chapter == null) return;
   const { comics = {} } = await chrome.storage.local.get("comics");
@@ -294,7 +294,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (Date.now() - new Date(existing.visitedAt).getTime() < 60_000) return;
   }
   chrome.runtime.sendMessage({ type: "AUTO_TRACK", scraped }).catch(() => {});
-})();
+}
+
+autoTrack();
+
+// Re-run autoTrack on SPA navigation (Next.js / pushState) — content script
+// only executes on full page loads, but AsuraScans uses client-side routing.
+let _lastTrackedUrl = location.href;
+const _navObserver = new MutationObserver(() => {
+  if (location.href === _lastTrackedUrl) return;
+  _lastTrackedUrl = location.href;
+  autoTrack();
+});
+_navObserver.observe(document.body, { childList: true, subtree: true });
 
 // Index-page update check: when user visits a tracked comic's index page,
 // read the latest chapter from the already-rendered DOM (bypasses JS-rendering
