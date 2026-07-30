@@ -325,6 +325,8 @@ textarea {
 .chapter-grid-cell { font-size: 11px; padding: 2px 0; color: var(--text); white-space: nowrap; }
 .chapter-grid-cell--link { cursor: pointer; color: var(--accent); }
 .chapter-grid-cell--link:hover { text-decoration: underline; }
+.chapter-grid-cell--last { font-weight: 600; }
+.chapter-grid-cell--last::before { content: "▸ "; }
 .chapter-date { color: var(--text-muted); margin-left: 3px; }
 
 .chapter-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }

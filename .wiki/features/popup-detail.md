@@ -28,8 +28,14 @@ The list above the panel is split into **Tracked** and **Dropped** tabs
 
 `renderChapterHistory(c)` renders chapters in reverse order (newest first) inside a 3-column grid.
 
-- The most recent cell (`i === 0`) gets class `chapter-grid-cell--link` and `data-url` set to `c.lastChapterUrl`.
-- Clicking it opens the URL directly in a new tab.
+- Every cell is a link: `chapterUrl(c, h.chapter)` builds the URL from the comic's
+  current slug, so all of them keep working after a slug rotation. Before 1.5 only
+  the newest cell was clickable, pointing at the stored `lastChapterUrl` — which
+  was the URL of whichever chapter was read last, not of the chapter on the cell,
+  and which went dead on the next rotation.
+- The cell for `lastReadChapter(c)` — the most recently *visited* chapter, not
+  necessarily the furthest one — is marked with `chapter-grid-cell--last` as the
+  "carry on from here" target.
 - The "Latest" row below the grid shows the scraped latest chapter with an Open button - this only appears when `c.latestChapter > c.lastChapter`.
 
 ## Genres

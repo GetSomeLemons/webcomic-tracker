@@ -5,15 +5,13 @@
 // Scraper
 // ---------------------------------------------------------------------------
 
-const ASURA_CHAPTER_RE = /asurascans\.com\/(manga|comics)\/([^/]+)\/chapter[/-](\d+)/i;
+// Group 3 captures the separator ("/chapter/12" vs "/chapter-12") — it is part
+// of the comic's address, so it is stored instead of guessed at link time.
+const ASURA_CHAPTER_RE = /asurascans\.com\/(manga|comics)\/([^/]+)\/chapter([/-])(\d+)/i;
 const ASURA_INDEX_RE = /asurascans\.com\/(manga|comics)\/([^/]+)\/?$/i;
 
-// AsuraScans appends a rotating hex suffix to slugs (e.g. "-30e93729") that
-// changes periodically, presumably to break saved links/scrapers. Strip it so
-// the same comic keeps one stable storage id across the rotation.
-function stableSlug(slug) {
-  return slug.replace(/-[0-9a-f]{6,10}$/i, "");
-}
+// stableSlug(), parseComicUrl() and friends live in urls.js, loaded before this
+// file by the content_scripts entry.
 
 function scrapeAsura() {
   const chapterMatch = location.href.match(ASURA_CHAPTER_RE);
@@ -22,7 +20,7 @@ function scrapeAsura() {
   const match = chapterMatch || indexMatch;
   const pathType = match[1];
   const slug = match[2];
-  const chapter = chapterMatch ? parseInt(chapterMatch[3], 10) : null;
+  const chapter = chapterMatch ? parseInt(chapterMatch[4], 10) : null;
   const titleEl = [
     document.querySelector(`.breadcrumb a[href*='/${pathType}/']`),
     document.querySelector(".entry-title"),
@@ -31,8 +29,12 @@ function scrapeAsura() {
   const rawTitle = titleEl?.textContent.trim() || document.title.replace(/\s+[-–—|·].*$/, "").trim();
   const title = rawTitle.replace(/\s+chapter\s*\d+.*/i, "").trim();
   return {
-    id: `asura__${stableSlug(slug)}`, title, slug, chapter,
-    url: location.href, indexUrl: `https://asurascans.com/${pathType}/${slug}/`, site: "asurascans.com",
+    id: `asura__${stableSlug(slug)}`, title, chapter, site: "asurascans.com",
+    // The address, split: every link is rebuilt from these two fields. The
+    // origin is fixed, not taken from location: host_permissions only covers
+    // the apex, so storing a "www." host would break background update fetches.
+    urlRoot: `https://asurascans.com/${pathType}`, slug,
+    ...(chapterMatch && { chapterSep: chapterMatch[3] }),
     // Only grab cover from the index page; chapter pages may have a different og:image
     ...(!chapterMatch && { coverUrl: document.querySelector('meta[property="og:image"]')?.content ?? null }),
   };
@@ -41,7 +43,7 @@ function scrapeAsura() {
 function scrapeGeneric() {
   const title = document.title.replace(/\s*[|–\-].*$/, "").trim() || location.hostname;
   const id = "generic__" + (location.hostname + location.pathname).replace(/[^a-z0-9]/gi, "").slice(0, 24);
-  return { id, title, chapter: null, url: location.href, indexUrl: location.href, site: location.hostname };
+  return { id, title, chapter: null, indexUrl: location.href, site: location.hostname };
 }
 
 // ---------------------------------------------------------------------------
@@ -329,16 +331,16 @@ async function checkIndexForUpdates() {
 
   const latestChapter = latestChapterFromIndexDom(slug);
   const coverUrl = document.querySelector('meta[property="og:image"]')?.content ?? null;
-  // Rebuild the index URL from the *current* slug so a rotated suffix self-heals
-  // the stored bookmark the next time the user visits, instead of staying stale.
-  const freshUrl = `https://asurascans.com/${indexMatch[1]}/${slug}/`;
+  // The page in front of us carries the current slug, so a rotated suffix
+  // self-heals here too — not only during an update check.
+  const address = { urlRoot: `https://asurascans.com/${indexMatch[1]}`, slug };
 
   const chapterUnchanged = latestChapter === null || latestChapter === comics[id].latestChapter;
   const coverUnchanged = !coverUrl || coverUrl === comics[id].coverUrl;
-  const urlUnchanged = freshUrl === comics[id].url;
-  if (chapterUnchanged && coverUnchanged && urlUnchanged) return;
+  const addressUnchanged = slug === comics[id].slug && address.urlRoot === comics[id].urlRoot;
+  if (chapterUnchanged && coverUnchanged && addressUnchanged) return;
 
-  chrome.runtime.sendMessage({ type: "UPDATE_LATEST_CHAPTER", id, latestChapter, coverUrl, url: freshUrl }).catch(() => {});
+  chrome.runtime.sendMessage({ type: "UPDATE_LATEST_CHAPTER", id, latestChapter, coverUrl, address }).catch(() => {});
 }
 
 // ---------------------------------------------------------------------------

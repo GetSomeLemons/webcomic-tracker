@@ -290,7 +290,7 @@ function showDetail(id) {
   document.getElementById("view-detail").classList.add("visible");
   const titleEl = document.getElementById("detail-title");
   titleEl.textContent = c.title;
-  titleEl.onclick = () => chrome.tabs.create({ url: c.url });
+  titleEl.onclick = () => chrome.tabs.create({ url: indexUrl(c) });
   document.getElementById("detail-site").textContent =
     `${c.site ?? ""} · Added ${formatDate(c.addedAt)}${isDropped(c) ? " · Dropped" : ""}`;
   const dropBtn = document.getElementById("btn-drop");
@@ -313,12 +313,20 @@ function renderChapterHistory(c) {
     : (c.lastChapter != null ? [{ chapter: c.lastChapter, visitedAt: c.lastVisited }] : [])
   ).slice().reverse();
 
+  // Every chapter is a link now: URLs are built from the comic's current slug
+  // instead of only the one URL that happened to be stored at read time. The
+  // chapter you left off on is marked, so picking it up again is one click.
+  const lastRead = lastReadChapter(c);
+
   const histEl = document.getElementById("chapter-history");
   if (hist.length) {
     histEl.innerHTML = `<div class="chapter-grid">` +
-      hist.map((h, i) => {
-        const url = i === 0 && c.lastChapterUrl ? c.lastChapterUrl : null;
-        return `<div class="chapter-grid-cell${url ? " chapter-grid-cell--link" : ""}"${url ? ` data-url="${esc(url)}"` : ""}>Ch&nbsp;${h.chapter}<span class="chapter-date">${formatDateMD(h.visitedAt)}</span></div>`;
+      hist.map((h) => {
+        const url = chapterUrl(c, h.chapter);
+        const cls = `chapter-grid-cell${url ? " chapter-grid-cell--link" : ""}` +
+          (h.chapter === lastRead ? " chapter-grid-cell--last" : "");
+        const title = h.chapter === lastRead ? ' title="Where you left off"' : "";
+        return `<div class="${cls}"${url ? ` data-url="${esc(url)}"` : ""}${title}>Ch&nbsp;${h.chapter}<span class="chapter-date">${formatDateMD(h.visitedAt)}</span></div>`;
       }).join("") +
       `</div>`;
     histEl.querySelectorAll(".chapter-grid-cell--link").forEach((el) => {
@@ -336,14 +344,10 @@ function renderChapterHistory(c) {
     latestRow.style.display = "";
     const isNew = c.lastChapter != null && c.latestChapter > c.lastChapter;
     latestSpan.textContent = `Ch ${c.latestChapter}${isNew ? "" : " ✓"}`;
-    if (isNew) {
+    const latestUrl = chapterUrl(c, c.latestChapter);
+    if (isNew && latestUrl) {
       btnOpen.style.display = "";
-      btnOpen.onclick = () => {
-        const m = c.lastChapterUrl?.match(/\/chapter([/-])\d+/);
-        const sep = m?.[1] ?? "/";
-        const base = c.lastChapterUrl?.replace(/\/chapter[/-]\d+.*$/, "") ?? c.url.replace(/\/$/, "");
-        chrome.tabs.create({ url: `${base}/chapter${sep}${c.latestChapter}/` });
-      };
+      btnOpen.onclick = () => chrome.tabs.create({ url: latestUrl });
     } else {
       btnOpen.style.display = "none";
     }

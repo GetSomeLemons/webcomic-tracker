@@ -1,5 +1,9 @@
 // Service worker — ephemeral. All state lives in chrome.storage.local.
 
+// stableSlug / parseComicUrl / indexUrl / chapterUrl — shared with the content
+// script and the popup so all three build comic links the same way.
+importScripts("urls.js");
+
 const GIST_DESCRIPTION = "webcomic-tracker-data";
 const GIST_FILENAME = "webcomic-tracker.json";
 const ALARM_NAME = "update-check";
@@ -47,26 +51,26 @@ function withComicsLock(fn) {
   return result;
 }
 
-// AsuraScans rotates a trailing hex suffix on slugs (e.g. "-30e93729"). Kept in
-// sync with the copy in content.js (and the inlined copy in scrapePageInline,
-// which can't reference this — it runs as a serialized, closure-free function).
-function stableSlug(slug) {
-  return slug.replace(/-[0-9a-f]{6,10}$/i, "");
+// Two one-time-per-load migrations, both idempotent and a cheap no-op once done.
+// They run every time the (ephemeral) service worker wakes, which also catches
+// old-shape comics arriving from another profile's Gist push.
+//
+// 1. Comics saved before the stable-id fix are keyed by the full slug, suffix
+//    included, so fresh lookups by the new id miss them and silently stop
+//    updating. Re-key any leftover old-style entry.
+// 2. Comics saved before 1.5 store whole URLs, which rot on the next slug
+//    rotation. Split them into urlRoot + slug — see splitAddress.
+function migrateComics() {
+  return withComicsLock(applyComicMigration);
 }
 
-// One-time-per-load migration: comics saved before the stable-id fix are keyed
-// by the full slug, suffix included, so fresh lookups by the new id miss them
-// and silently stop updating. Re-key any leftover old-style entry. Runs every
-// time the (ephemeral) service worker wakes — idempotent, cheap no-op once done.
-function migrateAsuraIds() {
-  return withComicsLock(applyAsuraIdMigration);
-}
-
-async function applyAsuraIdMigration() {
+async function applyComicMigration() {
   const { comics = {} } = await chrome.storage.local.get("comics");
   let changed = false;
   const next = {};
-  for (const [id, comic] of Object.entries(comics)) {
+  for (const [id, stored] of Object.entries(comics)) {
+    const comic = splitAddress(stored);
+    if (comic !== stored) changed = true;
     const newId = id.startsWith("asura__") ? `asura__${stableSlug(id.slice(7))}` : id;
     if (newId === id) {
       if (!next[id]) next[id] = comic;
@@ -76,6 +80,20 @@ async function applyAsuraIdMigration() {
     next[newId] = next[newId] ? mergeComics(next[newId], { ...comic, id: newId }) : { ...comic, id: newId };
   }
   if (changed) await chrome.storage.local.set({ comics: next });
+}
+
+// Replaces the stored `url` / `lastChapterUrl` pair with urlRoot + slug. Both
+// URLs pointed at the slug of the day: the index one was rewritten on every
+// visit, the chapter one never was, which is why "open where I left off" landed
+// on a dead link. Chapter links are derived from the history from now on.
+// Generic (non-AsuraScans) comics keep `url` — they have no slug to rotate.
+function splitAddress(comic) {
+  if (!("url" in comic) && !("lastChapterUrl" in comic)) return comic; // already split
+  const address = comic.slug ? null : parseComicUrl(comic.url);
+  if (!address && !comic.slug) return comic; // generic site: `url` is the address
+  const chapterSep = comic.chapterSep ?? comic.lastChapterUrl?.match(/\/chapter([/-])\d+/)?.[1];
+  const { url, lastChapterUrl, ...rest } = comic;
+  return { ...rest, ...address, ...(chapterSep && { chapterSep }) };
 }
 
 // Field-level merge of two copies of the same comic. Used both when two
@@ -115,7 +133,7 @@ function mergeComics(a, b) {
   };
 }
 
-migrateAsuraIds().catch((e) => console.warn("Asura id migration failed:", e.message));
+migrateComics().catch((e) => console.warn("Comic migration failed:", e.message));
 
 // ---------------------------------------------------------------------------
 // Lifecycle
@@ -217,17 +235,17 @@ async function saveCurrentTab(tabId) {
 // Inline scraper injected via scripting API when content script isn't loaded.
 // Must be self-contained (no closures, no external references).
 function scrapePageInline() {
-  const chapterMatch = location.href.match(/asurascans\.com\/(manga|comics)\/([^/]+)\/chapter[/-](\d+)/i);
+  const chapterMatch = location.href.match(/asurascans\.com\/(manga|comics)\/([^/]+)\/chapter([/-])(\d+)/i);
   const indexMatch = location.href.match(/asurascans\.com\/(manga|comics)\/([^/]+)\/?$/i);
   const match = chapterMatch || indexMatch;
   const slug = match?.[2];
   if (!slug) {
     const title = document.title.replace(/\s*[|–\-].*$/, "").trim() || location.hostname;
     const id = "generic__" + (location.hostname + location.pathname).replace(/[^a-z0-9]/gi, "").slice(0, 24);
-    return { id, title, chapter: null, url: location.href, indexUrl: location.href, site: location.hostname };
+    return { id, title, chapter: null, indexUrl: location.href, site: location.hostname };
   }
   const pathType = match[1];
-  const chapter = chapterMatch ? parseInt(chapterMatch[3], 10) : null;
+  const chapter = chapterMatch ? parseInt(chapterMatch[4], 10) : null;
   const titleEl = [
     document.querySelector(`.breadcrumb a[href*="/${pathType}/"]`),
     document.querySelector(".entry-title"),
@@ -236,11 +254,12 @@ function scrapePageInline() {
   const rawTitle = titleEl?.textContent.trim() || document.title.replace(/\s+[-–—|·].*$/, "").trim();
   const title = rawTitle.replace(/\s+chapter\s*\d+.*/i, "").trim();
   // AsuraScans rotates a trailing hex suffix on slugs (e.g. "-30e93729") — strip
-  // it so the id stays stable across the rotation (see content.js stableSlug).
+  // it so the id stays stable across the rotation (see urls.js stableSlug).
   const stableSlugPart = slug.replace(/-[0-9a-f]{6,10}$/i, "");
   return {
-    id: `asura__${stableSlugPart}`, title, chapter,
-    url: location.href, indexUrl: `https://asurascans.com/${pathType}/${slug}/`, site: "asurascans.com",
+    id: `asura__${stableSlugPart}`, title, chapter, site: "asurascans.com",
+    urlRoot: `https://asurascans.com/${pathType}`, slug,
+    ...(chapterMatch && { chapterSep: chapterMatch[3] }),
     ...(!chapterMatch && { coverUrl: document.querySelector('meta[property="og:image"]')?.content ?? null }),
   };
 }
@@ -295,11 +314,13 @@ async function applyUpsert(scraped) {
       // Always track the highest chapter visited, not just the most recent
       comics[id].lastChapter = Math.max(comics[id].lastChapter ?? 0, scraped.chapter);
     }
-    comics[id].lastChapterUrl = scraped.url;
     comics[id].lastVisited = now;
-    // Self-heal the index URL: AsuraScans' slug suffix rotates over time, so
-    // any fresh visit should replace a now-stale stored URL with the current one.
-    if (scraped.indexUrl) comics[id].url = scraped.indexUrl;
+    // Self-heal the address: AsuraScans' slug suffix rotates over time, so any
+    // fresh visit replaces a now-stale slug with the current one. One write —
+    // every index and chapter link is derived from it.
+    if (scraped.slug) Object.assign(comics[id], { urlRoot: scraped.urlRoot, slug: scraped.slug });
+    else if (scraped.indexUrl) comics[id].url = scraped.indexUrl;
+    if (scraped.chapterSep) comics[id].chapterSep = scraped.chapterSep;
     // Persist user-editable fields when coming from the Save button (not from scraping)
     if (scraped.rating !== undefined) comics[id].rating = scraped.rating;
     if (scraped.review !== undefined) comics[id].review = scraped.review;
@@ -309,10 +330,12 @@ async function applyUpsert(scraped) {
     comics[id] = {
       id,
       title: scraped.title,
-      url: scraped.indexUrl,
+      // AsuraScans comics are addressed by urlRoot + slug; anything else keeps
+      // the page URL, having no rotating slug to split off.
+      ...(scraped.slug ? { urlRoot: scraped.urlRoot, slug: scraped.slug } : { url: scraped.indexUrl }),
+      ...(scraped.chapterSep && { chapterSep: scraped.chapterSep }),
       site: scraped.site,
       lastChapter: scraped.chapter,
-      lastChapterUrl: scraped.url,
       lastVisited: now,
       chapterHistory: scraped.chapter != null ? [{ chapter: scraped.chapter, visitedAt: now }] : [],
       latestChapter: null,
@@ -371,7 +394,7 @@ async function runUpdateCheck({ force = false } = {}) {
   const { comics = {} } = await chrome.storage.local.get("comics");
   const now = Date.now();
   const toCheck = Object.values(comics).filter((c) => {
-    if (c.site !== "asurascans.com" || !c.url) return false;
+    if (c.site !== "asurascans.com" || !indexUrl(c)) return false;
     if (isDropped(c)) return false; // the whole point of dropping
     if (force || !c.latestChecked) return true;
     return now - new Date(c.latestChecked).getTime() > FRESH_MS;
@@ -390,7 +413,7 @@ async function runUpdateCheck({ force = false } = {}) {
   // Pass 1: plain fetch, in parallel. Enough for any index page that ships its
   // chapter list in the markup, which is the normal case.
   await mapLimit(toCheck, CHECK_CONCURRENCY, async (comic) => {
-    const result = await fetchLatestChapter(comic.url);
+    const result = await fetchLatestChapter(indexUrl(comic));
     if (result.latestChapter === null) needsTab.push(comic);
     else await applyCheckResult(comic.id, result);
     await bump();
@@ -415,30 +438,45 @@ async function runUpdateCheck({ force = false } = {}) {
   return { checked: toCheck.length - skipped, skipped };
 }
 
-async function applyCheckResult(id, { latestChapter, coverUrl }) {
+async function applyCheckResult(id, { latestChapter, coverUrl, address }) {
   const fields = {};
   if (latestChapter !== null) {
     fields.latestChapter = latestChapter;
     fields.latestChecked = new Date().toISOString();
   }
   if (coverUrl) fields.coverUrl = coverUrl;
+  // The check already has the current page in hand, so this is the natural place
+  // to notice a rotated slug — the user should not have to visit the site for
+  // their stored links to start working again.
+  if (ownsAddress(id, address)) Object.assign(fields, address);
   if (!Object.keys(fields).length) return;
   // A failed write costs one comic's result, not the rest of the run.
   await patchComic(id, fields).catch((e) => console.warn("Could not store result for", id, e.message));
 }
 
 async function fetchLatestChapter(url) {
+  const empty = { latestChapter: null, coverUrl: null, address: null };
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-    if (!res.ok) return { latestChapter: null, coverUrl: null };
+    if (!res.ok) return empty;
     const html = await res.text();
     return {
       latestChapter: extractLatestChapter(html),
       coverUrl: html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i)?.[1] ?? null,
+      // A stale slug redirects to the current one, so the response URL carries
+      // the fresh address; the canonical link covers a server that serves the
+      // page under the old slug instead of redirecting.
+      address: parseComicUrl(res.url) ?? parseComicUrl(canonicalUrl(html)),
     };
   } catch (_) {
-    return { latestChapter: null, coverUrl: null };
+    return empty;
   }
+}
+
+function canonicalUrl(html) {
+  return html.match(/<link[^>]+rel="canonical"[^>]+href="([^"]+)"/i)?.[1]
+    ?? html.match(/<meta[^>]+property="og:url"[^>]+content="([^"]+)"/i)?.[1]
+    ?? null;
 }
 
 async function updateBadge() {
@@ -455,12 +493,16 @@ async function updateBadge() {
 // chapter list, scrapes the highest chapter number, then closes the tab.
 // The tab appears briefly in the tab bar but does not steal focus.
 async function checkComicViaTab(comic) {
-  const slug = comic.url.match(/\/([^/]+)\/?$/)?.[1] ?? "";
-  if (!slug) return { latestChapter: null, coverUrl: null };
+  const slug = comic.slug ?? parseComicUrl(comic.url)?.slug;
+  if (!slug) return { latestChapter: null, coverUrl: null, address: null };
+  // Match chapter links on the suffix-free part of the slug: if the tab was
+  // redirected to a rotated slug, the stored one no longer appears in any href.
+  const linkSlug = stableSlug(slug);
 
   return new Promise((resolve) => {
     let tabId = null;
     let settled = false;
+    let lastPageUrl = null;
 
     function done(result) {
       if (settled) return;
@@ -468,7 +510,9 @@ async function checkComicViaTab(comic) {
       clearTimeout(timer);
       chrome.tabs.onUpdated.removeListener(onUpdated);
       if (tabId !== null) chrome.tabs.remove(tabId).catch(() => {});
-      resolve(result);
+      // Where the tab actually ended up, which is the current address whenever
+      // the stored slug has rotated out from under us.
+      resolve({ ...result, address: parseComicUrl(result.pageUrl) });
     }
 
     async function onUpdated(id, info) {
@@ -484,20 +528,23 @@ async function checkComicViaTab(comic) {
               .map((a) => { const m = a.href.match(/\/chapter[-/](\d+)/i); return m ? parseInt(m[1], 10) : null; })
               .filter((n) => n !== null);
             const coverUrl = document.querySelector('meta[property="og:image"]')?.content ?? null;
-            return { latestChapter: nums.length ? Math.max(...nums) : null, coverUrl };
+            return { latestChapter: nums.length ? Math.max(...nums) : null, coverUrl, pageUrl: location.href };
           },
-          args: [slug],
+          args: [linkSlug],
         }).then((r) => r?.[0]?.result ?? null).catch(() => null);
 
         if (result?.latestChapter != null) return done(result);
+        // Keep the URL even when nothing was read: a rotated slug is worth
+        // storing on its own, so the next run fetches the right page.
+        if (result?.pageUrl) lastPageUrl = result.pageUrl;
         await new Promise((r) => setTimeout(r, TAB_POLL_INTERVAL_MS));
       }
-      done({ latestChapter: null, coverUrl: null });
+      done({ latestChapter: null, coverUrl: null, pageUrl: lastPageUrl });
     }
 
-    const timer = setTimeout(() => done({ latestChapter: null, coverUrl: null }), 20_000);
+    const timer = setTimeout(() => done({ latestChapter: null, coverUrl: null, pageUrl: lastPageUrl }), 20_000);
     chrome.tabs.onUpdated.addListener(onUpdated);
-    chrome.tabs.create({ url: comic.url, active: false }, (tab) => { tabId = tab.id; });
+    chrome.tabs.create({ url: indexUrl(comic), active: false }, (tab) => { tabId = tab.id; });
   });
 }
 
@@ -788,14 +835,11 @@ async function handleMessage(msg) {
       return { ok: true };
     }
     case "UPDATE_LATEST_CHAPTER": {
-      const fields = {};
-      if (msg.latestChapter != null) {
-        fields.latestChapter = msg.latestChapter;
-        fields.latestChecked = new Date().toISOString();
-      }
-      if (msg.coverUrl) fields.coverUrl = msg.coverUrl;
-      if (msg.url) fields.url = msg.url;
-      await patchComic(msg.id, fields);
+      await applyCheckResult(msg.id, {
+        latestChapter: msg.latestChapter ?? null,
+        coverUrl: msg.coverUrl,
+        address: msg.address,
+      });
       await updateBadge();
       return { ok: true };
     }
@@ -805,7 +849,6 @@ async function handleMessage(msg) {
       const ch = msg.chapter ?? null;
       comics[msg.id].lastChapter = ch;
       comics[msg.id].chapterHistory = ch != null ? [{ chapter: ch, visitedAt: new Date().toISOString() }] : [];
-      comics[msg.id].lastChapterUrl = null;
       await chrome.storage.local.set({ comics });
       await updateBadge();
       queueGistSync();
