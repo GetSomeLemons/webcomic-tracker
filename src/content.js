@@ -74,17 +74,20 @@ chrome.storage.local.get("settings", ({ settings }) => {
 // Toast
 // ---------------------------------------------------------------------------
 
-function showToast(msg) {
+// `accent` colours the left edge so a status can be read at a glance without
+// the toast having to be read word by word.
+function showToast(msg, accent) {
   const existing = document.getElementById("wct-toast");
   if (existing) existing.remove();
   const el = document.createElement("div");
   el.id = "wct-toast";
   el.textContent = msg;
   Object.assign(el.style, {
-    position: "fixed", bottom: "20px", right: "20px", zIndex: "2147483647",
+    position: "fixed", top: "20px", right: "20px", zIndex: "2147483647",
     background: "#323232", color: "#fff", padding: "10px 16px", borderRadius: "6px",
     fontSize: "13px", fontFamily: "system-ui, sans-serif", boxShadow: "0 2px 8px rgba(0,0,0,.4)",
     transition: "opacity 0.3s", opacity: "1",
+    ...(accent && { borderLeft: `3px solid ${accent}` }),
   });
   document.body.appendChild(el);
   setTimeout(() => { el.style.opacity = "0"; setTimeout(() => el.remove(), 300); }, 2500);
@@ -303,22 +306,20 @@ async function autoTrack() {
   chrome.runtime.sendMessage({ type: "AUTO_TRACK", scraped }).catch(() => {});
 }
 
-autoTrack();
-
-// Re-run autoTrack on SPA navigation (Next.js / pushState) — content script
-// only executes on full page loads, but AsuraScans uses client-side routing.
-let _lastTrackedUrl = location.href;
-const _navObserver = new MutationObserver(() => {
-  if (location.href === _lastTrackedUrl) return;
-  _lastTrackedUrl = location.href;
-  autoTrack();
-});
-_navObserver.observe(document.body, { childList: true, subtree: true });
-
 // Index-page update check: when user visits a tracked comic's index page,
 // read the latest chapter from the already-rendered DOM (bypasses JS-rendering
 // issue that affects background fetch) and store it.
-(async function checkIndexForUpdates() {
+// Highest chapter number linked on the rendered index page. Read straight from
+// the DOM, which is why the index page is a more reliable source than a
+// background fetch of the same URL.
+function latestChapterFromIndexDom(slug) {
+  const nums = [...document.querySelectorAll(`a[href*="${slug}"]`)]
+    .map((a) => { const m = a.href.match(/\/chapter[-/](\d+)/i); return m ? parseInt(m[1], 10) : null; })
+    .filter((n) => n !== null);
+  return nums.length ? Math.max(...nums) : null;
+}
+
+async function checkIndexForUpdates() {
   const indexMatch = location.href.match(ASURA_INDEX_RE);
   if (!indexMatch) return;
   const slug = indexMatch[2];
@@ -326,10 +327,7 @@ _navObserver.observe(document.body, { childList: true, subtree: true });
   const { comics = {} } = await chrome.storage.local.get("comics");
   if (!comics[id]) return;
 
-  const nums = [...document.querySelectorAll(`a[href*="${slug}"]`)]
-    .map((a) => { const m = a.href.match(/\/chapter[-/](\d+)/i); return m ? parseInt(m[1], 10) : null; })
-    .filter((n) => n !== null);
-  const latestChapter = nums.length ? Math.max(...nums) : null;
+  const latestChapter = latestChapterFromIndexDom(slug);
   const coverUrl = document.querySelector('meta[property="og:image"]')?.content ?? null;
   // Rebuild the index URL from the *current* slug so a rotated suffix self-heals
   // the stored bookmark the next time the user visits, instead of staying stale.
@@ -341,4 +339,53 @@ _navObserver.observe(document.body, { childList: true, subtree: true });
   if (chapterUnchanged && coverUnchanged && urlUnchanged) return;
 
   chrome.runtime.sendMessage({ type: "UPDATE_LATEST_CHAPTER", id, latestChapter, coverUrl, url: freshUrl }).catch(() => {});
-})();
+}
+
+// ---------------------------------------------------------------------------
+// Status toast
+// ---------------------------------------------------------------------------
+
+// Announce a comic's status when its index page is opened, so it is obvious
+// whether you already follow it — and in particular whether you deliberately
+// dropped it — before sinking time into it. Index pages only: firing on every
+// chapter page would be noise while reading.
+async function showStatusToast() {
+  const indexMatch = location.href.match(ASURA_INDEX_RE);
+  if (!indexMatch) return;
+  const { comics = {} } = await chrome.storage.local.get("comics");
+  const comic = comics[`asura__${stableSlug(indexMatch[2])}`];
+  if (!comic) return;
+
+  const read = comic.lastChapter != null ? `read up to Ch ${comic.lastChapter}` : "nothing read yet";
+  if (comic.status === "dropped") {
+    showToast(`⏹ Dropped · ${read}`, "#ff6b6b");
+    return;
+  }
+  // Prefer the count from the page in front of us over the stored one, which the
+  // concurrent index check may not have refreshed yet.
+  const latest = latestChapterFromIndexDom(indexMatch[2]) ?? comic.latestChapter;
+  const behind = latest != null ? latest - (comic.lastChapter ?? 0) : 0;
+  showToast(`✓ Tracked · ${read}${behind > 0 ? ` · ${behind} new` : ""}`, "#4a9eff");
+}
+
+// ---------------------------------------------------------------------------
+// Navigation
+// ---------------------------------------------------------------------------
+
+// AsuraScans is a Next.js SPA: the content script runs once per full page load,
+// so everything URL-dependent has to re-run on client-side navigation too.
+function onNavigate() {
+  autoTrack();
+  checkIndexForUpdates();
+  showStatusToast();
+}
+
+onNavigate();
+
+let _lastTrackedUrl = location.href;
+const _navObserver = new MutationObserver(() => {
+  if (location.href === _lastTrackedUrl) return;
+  _lastTrackedUrl = location.href;
+  onNavigate();
+});
+_navObserver.observe(document.body, { childList: true, subtree: true });

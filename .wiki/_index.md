@@ -13,6 +13,7 @@ Map from code areas to documentation articles.
 | Article | Covers |
 |---------|--------|
 | `dark-mode.md` | CSS-filter dark mode injection, toggle logic |
+| `drop-status.md` | Tracked/dropped status, status tabs, index-page status toast |
 | `gist-sync.md` | GitHub Gist sync, data payload, merge strategy |
 | `popup-detail.md` | Detail panel: chapter history link, genre Title Case, autocomplete |
 

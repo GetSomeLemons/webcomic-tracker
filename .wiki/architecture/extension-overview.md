@@ -35,10 +35,26 @@ All messages follow `{ type: string, ...payload }`.
 | popup | background | `GET_ALL_COMICS` | `{ comics }` |
 | popup | background | `UPSERT_COMIC` | `{ ok }` |
 | popup | background | `REMOVE_COMIC` | `{ ok }` |
-| popup | background | `CHECK_UPDATES` | `{ done }` |
+| popup | background | `CHECK_UPDATES` | `{ started }` — returns at once, see below |
+| popup | background | `PULL_FROM_GIST` | `{ ok, count? , unchanged?, error? }` |
+| popup | background | `SET_STATUS` | `{ ok, status }` — tracked/dropped, see drop-status |
 | options | background | `GIST_INIT` | `{ ok, gistId, error? }` |
 | options | background | `SAVE_SETTINGS` | `{ ok }` |
 | popup | content (tab) | `TOGGLE_DARK` | `{ darkNow }` |
+
+`CHECK_UPDATES` takes `{ force }`. The popup sets it, because an explicit click
+means "check now" and should ignore the freshness window.
+
+### The popup does not wait for background work
+
+`CHECK_UPDATES` and the popup's opening `PULL_FROM_GIST` both return immediately.
+The background worker writes results to `chrome.storage.local` as they arrive and
+the popup re-renders from a `chrome.storage.onChanged` listener, so the list fills
+in live instead of blocking on a request that can take a while. Check progress is
+published as `checkProgress` for the button label.
+
+The listener skips re-rendering while the detail panel is open: rating and genre
+edits live in the popup's `allComics` until Save, and a reload would drop them.
 
 ## Data Model (`chrome.storage.local`)
 
@@ -47,6 +63,7 @@ All messages follow `{ type: string, ...payload }`.
   settings: {
     githubPat: "ghp_...",      // not synced to Gist
     gistId: null,
+    gistEtag: null,            // conditional-request cache for pulls
     darkModeGlobal: false,
     autoUpdate: false,         // off by default; manual CHECK_UPDATES always works
     updateAlarmMinutes: 60
@@ -55,21 +72,35 @@ All messages follow `{ type: string, ...payload }`.
     "asura__<slug>": {
       id, title,
       url,                     // manga index URL
-      lastChapter: 187,        // last chapter read by the user
+      lastChapter: 187,        // furthest chapter read by the user
       lastChapterUrl,
       lastVisited,             // ISO timestamp
+      chapterHistory: [{ chapter, visitedAt }],   // capped at 30 entries
       latestChapter: 192,      // from update check
       latestChecked,
-      newChapters: 5,          // latestChapter - lastChapter
+      acknowledgedChapter,     // dismisses the badge up to this chapter
+      status: "tracked",       // or "dropped"; absent on pre-1.4 data = tracked
+      statusChangedAt,         // merge key for status; see drop-status
       rating: null,            // 1-10
       review: "",
       genres: [],
+      coverUrl,
       addedAt
     }
   },
-  darkTabs: { "<tabId>": true }  // cleaned up on tabs.onRemoved
+  deletedComics: { "<id>": isoTimestamp },  // tombstones; see gist-sync
+  checkProgress: { running, done, total },  // present only during a check
+  darkTabs: { "<tabId>": true }             // cleaned up on tabs.onRemoved
 }
 ```
+
+The unread badge compares `latestChapter` against `acknowledgedChapter ?? lastChapter`.
+There is no stored `newChapters` field — it was written but never read.
+
+All writes to `comics` go through `withComicsLock()` (`upsertComic`, `patchComic`).
+The whole library lives under one storage key, so two overlapping
+read-modify-write cycles drop one side's changes — reachable whenever a page visit
+lands during an update check, or between the check's own parallel workers.
 
 ## Flow: Hotkey Save (Alt+S)
 
@@ -86,18 +117,29 @@ Alt+S
 
 ```
 chrome.alarms "update-check" (60 min, only if settings.autoUpdate === true)
-  → background.js runUpdateCheck()
-  → fetch(asura manga index) per tracked asura comic
-  → DOMParser → latestChapter
-  → comic.newChapters = latestChapter - lastChapter
-  → chrome.storage.local
+  → runUpdateCheck()
+  → skip dropped comics, and any whose latestChecked is under 6 h old (unless force)
+  → pass 1: fetch(index) for 5 comics at a time
+            → extractLatestChapter(html)   // text parsing, no DOM
+            → patchComic() per result, progress published as it goes
+  → pass 2: whatever pass 1 could not read → checkComicViaTab(), serialized,
+            max 3 per run
+  → updateBadge() → queueGistSync()
 
-Manual: popup "Check for updates" → CHECK_UPDATES (always available)
+Manual: popup "Check for updates" → CHECK_UPDATES { force: true }
 ```
+
+Results are written per comic as they arrive, not once at the end, so a worker
+that gets terminated mid-run keeps the progress it made.
+
+Two alarms exist: `update-check` (gated on `autoUpdate`) and `gist-pull` (always
+on when sync is configured). `scheduleAlarms()` owns both.
 
 ## Gotchas
 
-- The service worker is ephemeral. No module-level state; wrap all async operations to be self-contained.
+- **There is no DOM in a service worker.** `DOMParser`, `document`, and `window` are all undefined in `background.js`. An earlier version parsed fetched index pages with `DOMParser` inside a `try`/`catch` that swallowed the `ReferenceError`, so the fast path failed silently on *every* comic and each one fell through to the background-tab fallback with its fixed 4-second wait. That was the entire cause of update checks taking minutes. `extractLatestChapter()` now parses the markup as text. Injected scripts (`chrome.scripting.executeScript`) do run in a real document and may use selectors — `checkComicViaTab` does.
+- The service worker is ephemeral. Module-level variables are acceptable only for transient coordination that is worthless if lost (`writeChain`, `pushInFlight`); everything of record lives in `chrome.storage`.
+- Long-running background work must persist incrementally. The worker can be terminated mid-run, and anything only held in memory or written at the end is gone.
 - `content_scripts` with `<all_urls>` does not require broad host permissions (injection only, no fetch).
 - PAT is stored as plaintext in `chrome.storage.local`. Use a fine-grained Gist-scoped token.
 - AsuraScans DOM selectors may change. A selector array is used; first match wins.

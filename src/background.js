@@ -3,6 +3,49 @@
 const GIST_DESCRIPTION = "webcomic-tracker-data";
 const GIST_FILENAME = "webcomic-tracker.json";
 const ALARM_NAME = "update-check";
+const PULL_ALARM = "gist-pull";
+
+// Pull runs on its own schedule, independent of autoUpdate: a second browser
+// profile must converge on its own, without the user clicking "Sync".
+const PULL_INTERVAL_MINUTES = 5;
+const CHECK_CONCURRENCY = 5;
+const FETCH_TIMEOUT_MS = 10_000;
+// Comics checked more recently than this are skipped by a scheduled run.
+const FRESH_MS = 6 * 60 * 60 * 1000;
+// Each tab fallback costs seconds and flashes a real tab, so cap it per run.
+const TAB_FALLBACK_MAX = 3;
+const TAB_POLL_ATTEMPTS = 20;
+const TAB_POLL_INTERVAL_MS = 400;
+const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+// A comic is either actively tracked or dropped — read some of, but not enough
+// to keep up with. Dropped comics stay in the library with their history intact;
+// they are just excluded from update checks and the unread badge. Comics stored
+// before this existed have no status field, hence the fallback everywhere.
+const STATUS_TRACKED = "tracked";
+const STATUS_DROPPED = "dropped";
+
+const isDropped = (comic) => comic?.status === STATUS_DROPPED;
+
+// ---------------------------------------------------------------------------
+// Comics write lock
+// ---------------------------------------------------------------------------
+
+// Every write to the `comics` key funnels through one chain. The whole library
+// lives under a single key, so two overlapping read-modify-write cycles silently
+// drop one side's changes — easy to hit now that update checks run in parallel,
+// or when the user reads a chapter mid-check.
+//
+// This is transient coordination, not state of record: the service worker may be
+// terminated at any time and losing the chain costs nothing. Declared here so
+// nothing below can reference it before initialization.
+let writeChain = Promise.resolve();
+
+function withComicsLock(fn) {
+  const result = writeChain.then(fn);
+  writeChain = result.catch(() => {}); // one failure must not break the chain
+  return result;
+}
 
 // AsuraScans rotates a trailing hex suffix on slugs (e.g. "-30e93729"). Kept in
 // sync with the copy in content.js (and the inlined copy in scrapePageInline,
@@ -15,7 +58,11 @@ function stableSlug(slug) {
 // by the full slug, suffix included, so fresh lookups by the new id miss them
 // and silently stop updating. Re-key any leftover old-style entry. Runs every
 // time the (ephemeral) service worker wakes — idempotent, cheap no-op once done.
-async function migrateAsuraIds() {
+function migrateAsuraIds() {
+  return withComicsLock(applyAsuraIdMigration);
+}
+
+async function applyAsuraIdMigration() {
   const { comics = {} } = await chrome.storage.local.get("comics");
   let changed = false;
   const next = {};
@@ -31,8 +78,14 @@ async function migrateAsuraIds() {
   if (changed) await chrome.storage.local.set({ comics: next });
 }
 
-// Only reached if two old-style ids collapse onto the same stable id (e.g. the
-// same comic saved under two different rotations before this fix existed).
+// Field-level merge of two copies of the same comic. Used both when two
+// old-style ids collapse onto one stable id, and on every Gist sync, where the
+// two copies are two browser profiles that each read some chapters.
+//
+// Whole-object "newest wins" is not enough here: the profile that visited most
+// recently is not necessarily the one that read the furthest, so progress
+// fields are reconciled individually and only free-text fields follow the
+// most recent visit.
 function mergeComics(a, b) {
   const newer = (a.lastVisited ?? "") >= (b.lastVisited ?? "") ? a : b;
   const byChapter = new Map();
@@ -40,11 +93,25 @@ function mergeComics(a, b) {
     const existing = byChapter.get(h.chapter);
     if (!existing || h.visitedAt > existing.visitedAt) byChapter.set(h.chapter, h);
   }
+  // Update-check results belong to whichever copy checked last, regardless of
+  // who read last — a stale null would otherwise wipe a known latest chapter.
+  const checked = (a.latestChecked ?? "") >= (b.latestChecked ?? "") ? a : b;
+  // Dropping is a deliberate act that does not touch lastVisited, so status
+  // follows its own timestamp. Otherwise reading one chapter in another profile
+  // would silently undo a drop.
+  const statusSide = (a.statusChangedAt ?? "") >= (b.statusChangedAt ?? "") ? a : b;
   return {
     ...a, ...b, ...newer,
     lastChapter: Math.max(a.lastChapter ?? 0, b.lastChapter ?? 0),
+    lastVisited: newer.lastVisited,
     chapterHistory: [...byChapter.values()].sort((x, y) => x.chapter - y.chapter),
-    addedAt: (a.addedAt ?? "") < (b.addedAt ?? "") ? a.addedAt : b.addedAt,
+    latestChapter: checked.latestChapter ?? a.latestChapter ?? b.latestChapter ?? null,
+    latestChecked: checked.latestChecked ?? null,
+    acknowledgedChapter: Math.max(a.acknowledgedChapter ?? 0, b.acknowledgedChapter ?? 0) || null,
+    status: statusSide.status ?? a.status ?? b.status ?? STATUS_TRACKED,
+    statusChangedAt: statusSide.statusChangedAt ?? null,
+    coverUrl: newer.coverUrl ?? a.coverUrl ?? b.coverUrl ?? null,
+    addedAt: [a.addedAt, b.addedAt].filter(Boolean).sort()[0] ?? null,
   };
 }
 
@@ -56,18 +123,19 @@ migrateAsuraIds().catch((e) => console.warn("Asura id migration failed:", e.mess
 
 chrome.runtime.onInstalled.addListener(async (details) => {
   await ensureDefaults();
-  await scheduleAlarm();
+  await scheduleAlarms();
   await updateBadge();
   if (details.reason === "update" || details.reason === "install") {
     const { version } = chrome.runtime.getManifest();
     const { settings } = await chrome.storage.local.get("settings");
     await chrome.storage.local.set({ settings: { ...(settings ?? {}), installedVersion: version } });
   }
+  await pullFromGist();
 });
 
 chrome.runtime.onStartup.addListener(async () => {
+  await scheduleAlarms();
   await pullFromGist();
-  await scheduleAlarm();
   await updateBadge();
 });
 
@@ -89,12 +157,21 @@ async function ensureDefaults() {
   }
 }
 
-async function scheduleAlarm() {
+async function scheduleAlarms() {
   const { settings } = await chrome.storage.local.get("settings");
+
   await chrome.alarms.clear(ALARM_NAME);
-  if (!settings?.autoUpdate) return;
-  const minutes = settings?.updateAlarmMinutes ?? 60;
-  chrome.alarms.create(ALARM_NAME, { periodInMinutes: minutes });
+  if (settings?.autoUpdate) {
+    chrome.alarms.create(ALARM_NAME, { periodInMinutes: settings?.updateAlarmMinutes ?? 60 });
+  }
+
+  // Sync is not tied to autoUpdate. Without a periodic pull, a profile that
+  // stays open never learns what another profile read (onStartup fires once per
+  // browser launch, and switching Windows profiles rarely restarts the other).
+  await chrome.alarms.clear(PULL_ALARM);
+  if (settings?.githubPat && settings?.gistId) {
+    chrome.alarms.create(PULL_ALARM, { periodInMinutes: PULL_INTERVAL_MINUTES });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -128,9 +205,12 @@ async function saveCurrentTab(tabId) {
   }
 
   await upsertComic(scraped);
-  syncToGist();
+  queueGistSync();
   const label = scraped.chapter != null ? `${scraped.title} Ch ${scraped.chapter}` : scraped.title;
-  sendToast(tabId, `Saved: ${label}`);
+  // Saving does not un-drop anything — say so, or the comic looks like it went
+  // missing when it does not reappear under Tracked.
+  const { comics = {} } = await chrome.storage.local.get("comics");
+  sendToast(tabId, `Saved: ${label}${isDropped(comics[scraped.id]) ? " · still dropped" : ""}`);
   return scraped;
 }
 
@@ -188,7 +268,14 @@ chrome.commands.onCommand.addListener(async (command) => {
 // Comic storage
 // ---------------------------------------------------------------------------
 
-async function upsertComic(scraped) {
+// Serialized against every other comic write — see withComicsLock. Without it a
+// page visit landing mid-update-check overwrites that check's results, or loses
+// its own chapter to them.
+function upsertComic(scraped) {
+  return withComicsLock(() => applyUpsert(scraped));
+}
+
+async function applyUpsert(scraped) {
   const { comics = {} } = await chrome.storage.local.get("comics");
   const id = scraped.id;
   const now = new Date().toISOString();
@@ -230,7 +317,8 @@ async function upsertComic(scraped) {
       chapterHistory: scraped.chapter != null ? [{ chapter: scraped.chapter, visitedAt: now }] : [],
       latestChapter: null,
       latestChecked: null,
-      newChapters: null,
+      status: STATUS_TRACKED,
+      statusChangedAt: now,
       rating: null,
       review: "",
       genres: [],
@@ -247,54 +335,116 @@ async function upsertComic(scraped) {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) runUpdateCheck();
+  if (alarm.name === PULL_ALARM) pullFromGist();
 });
 
-async function runUpdateCheck() {
-  const { comics = {} } = await chrome.storage.local.get("comics");
-  const toCheck = Object.values(comics).filter((c) => c.site === "asurascans.com");
-  const newlyUpdated = [];
+// Runs N workers over a shared cursor. Bounded concurrency keeps the request
+// rate polite without paying a fixed sleep per comic.
+async function mapLimit(items, limit, fn) {
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < items.length) await fn(items[cursor++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
 
-  for (const comic of toCheck) {
-    const prevLatest = comic.latestChapter ?? 0;
-    try {
-      // Quick path: fetch + parse (works if site uses server-side rendering)
-      let latestChapter = null;
-      let coverUrl = null;
-      try {
-        const html = await fetch(comic.url).then((r) => r.text());
-        const doc = new DOMParser().parseFromString(html, "text/html");
-        latestChapter = extractLatestChapter(doc);
-        coverUrl = doc.querySelector('meta[property="og:image"]')?.getAttribute("content") ?? null;
-      } catch (_) {}
-      // Fallback: open in a real background tab so JS renders the chapter list
-      if (latestChapter === null) {
-        const result = await checkComicViaTab(comic);
-        latestChapter = result.latestChapter;
-        coverUrl = coverUrl ?? result.coverUrl;
-      }
-      if (latestChapter !== null) {
-        comics[comic.id].latestChapter = latestChapter;
-        comics[comic.id].latestChecked = new Date().toISOString();
-        comics[comic.id].newChapters = Math.max(0, latestChapter - (comic.lastChapter ?? 0));
-        if (latestChapter > prevLatest) {
-          newlyUpdated.push({ title: comic.title, chapter: latestChapter });
-        }
-      }
-      if (coverUrl) comics[comic.id].coverUrl = coverUrl;
-    } catch (e) {
-      console.warn("Update check failed for", comic.id, e.message);
-    }
-    await new Promise((r) => setTimeout(r, 1500));
+// Writes one comic's fields, re-reading inside the lock so it merges with
+// whatever else has been written since the caller last looked.
+function patchComic(id, fields) {
+  return withComicsLock(async () => {
+    const { comics = {} } = await chrome.storage.local.get("comics");
+    if (!comics[id]) return;
+    Object.assign(comics[id], fields);
+    await chrome.storage.local.set({ comics });
+  });
+}
+
+// Progress is kept in storage, not held in the worker, so the popup can render
+// it after being closed and reopened — and it survives the worker being killed.
+function setCheckProgress(progress) {
+  return progress
+    ? chrome.storage.local.set({ checkProgress: progress })
+    : chrome.storage.local.remove("checkProgress");
+}
+
+async function runUpdateCheck({ force = false } = {}) {
+  const { comics = {} } = await chrome.storage.local.get("comics");
+  const now = Date.now();
+  const toCheck = Object.values(comics).filter((c) => {
+    if (c.site !== "asurascans.com" || !c.url) return false;
+    if (isDropped(c)) return false; // the whole point of dropping
+    if (force || !c.latestChecked) return true;
+    return now - new Date(c.latestChecked).getTime() > FRESH_MS;
+  });
+
+  if (!toCheck.length) {
+    await setCheckProgress(null);
+    return { checked: 0 };
   }
 
-  await chrome.storage.local.set({ comics });
+  let done = 0;
+  const needsTab = [];
+  const bump = () => setCheckProgress({ running: true, done: ++done, total: toCheck.length });
+  await setCheckProgress({ running: true, done: 0, total: toCheck.length });
+
+  // Pass 1: plain fetch, in parallel. Enough for any index page that ships its
+  // chapter list in the markup, which is the normal case.
+  await mapLimit(toCheck, CHECK_CONCURRENCY, async (comic) => {
+    const result = await fetchLatestChapter(comic.url);
+    if (result.latestChapter === null) needsTab.push(comic);
+    else await applyCheckResult(comic.id, result);
+    await bump();
+  });
+
+  // Pass 2: whatever pass 1 could not read gets a real rendered page. These stay
+  // serialized — each one opens a visible tab.
+  for (const comic of needsTab.slice(0, TAB_FALLBACK_MAX)) {
+    try {
+      await applyCheckResult(comic.id, await checkComicViaTab(comic));
+    } catch (e) {
+      console.warn("Tab check failed for", comic.id, e.message);
+    }
+    await bump();
+  }
+  const skipped = Math.max(0, needsTab.length - TAB_FALLBACK_MAX);
+  if (skipped) console.warn(`${skipped} comic(s) unreadable this run; will retry next check.`);
+
+  await setCheckProgress(null);
   await updateBadge();
+  queueGistSync();
+  return { checked: toCheck.length - skipped, skipped };
+}
+
+async function applyCheckResult(id, { latestChapter, coverUrl }) {
+  const fields = {};
+  if (latestChapter !== null) {
+    fields.latestChapter = latestChapter;
+    fields.latestChecked = new Date().toISOString();
+  }
+  if (coverUrl) fields.coverUrl = coverUrl;
+  if (!Object.keys(fields).length) return;
+  // A failed write costs one comic's result, not the rest of the run.
+  await patchComic(id, fields).catch((e) => console.warn("Could not store result for", id, e.message));
+}
+
+async function fetchLatestChapter(url) {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    if (!res.ok) return { latestChapter: null, coverUrl: null };
+    const html = await res.text();
+    return {
+      latestChapter: extractLatestChapter(html),
+      coverUrl: html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i)?.[1] ?? null,
+    };
+  } catch (_) {
+    return { latestChapter: null, coverUrl: null };
+  }
 }
 
 async function updateBadge() {
   const { comics = {} } = await chrome.storage.local.get("comics");
   const unread = Object.values(comics).filter(
-    (c) => c.latestChapter != null && c.latestChapter > (c.acknowledgedChapter ?? c.lastChapter ?? 0)
+    (c) => !isDropped(c) && c.latestChapter != null && c.latestChapter > (c.acknowledgedChapter ?? c.lastChapter ?? 0)
   ).length;
   chrome.action.setBadgeText({ text: unread > 0 ? String(unread) : "" });
   if (unread > 0) chrome.action.setBadgeBackgroundColor({ color: "#e53935" });
@@ -321,11 +471,13 @@ async function checkComicViaTab(comic) {
       resolve(result);
     }
 
-    function onUpdated(id, info) {
+    async function onUpdated(id, info) {
       if (id !== tabId || info.status !== "complete") return;
-      // Give the page time to finish loading chapter list via JS/API
-      setTimeout(() => {
-        chrome.scripting.executeScript({
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      // Poll rather than wait a flat 4s: the chapter list normally renders in
+      // well under a second, and that fixed wait dominated the whole run.
+      for (let attempt = 0; attempt < TAB_POLL_ATTEMPTS && !settled; attempt++) {
+        const result = await chrome.scripting.executeScript({
           target: { tabId },
           func: (s) => {
             const nums = [...document.querySelectorAll(`a[href*="${s}"]`)]
@@ -335,47 +487,44 @@ async function checkComicViaTab(comic) {
             return { latestChapter: nums.length ? Math.max(...nums) : null, coverUrl };
           },
           args: [slug],
-        })
-          .then((r) => done(r?.[0]?.result ?? { latestChapter: null, coverUrl: null }))
-          .catch(() => done({ latestChapter: null, coverUrl: null }));
-      }, 4000);
+        }).then((r) => r?.[0]?.result ?? null).catch(() => null);
+
+        if (result?.latestChapter != null) return done(result);
+        await new Promise((r) => setTimeout(r, TAB_POLL_INTERVAL_MS));
+      }
+      done({ latestChapter: null, coverUrl: null });
     }
 
-    const timer = setTimeout(() => done({ latestChapter: null, coverUrl: null }), 30_000);
+    const timer = setTimeout(() => done({ latestChapter: null, coverUrl: null }), 20_000);
     chrome.tabs.onUpdated.addListener(onUpdated);
     chrome.tabs.create({ url: comic.url, active: false }, (tab) => { tabId = tab.id; });
   });
 }
 
-function extractLatestChapter(doc) {
-  // Try Next.js SSR data blob first (present even without JS execution)
-  const nextData = doc.getElementById("__NEXT_DATA__");
-  if (nextData) {
+// Parses the raw markup as text. A service worker has no DOM, so DOMParser is
+// unavailable here — using it is what made every comic fall through to the slow
+// tab fallback. The rendered-page path (checkComicViaTab) still uses selectors,
+// because injected scripts do run in a document.
+function extractLatestChapter(html) {
+  // Next.js ships the chapter list in an SSR data blob, no JS execution needed.
+  const blob = html.match(/id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/)?.[1];
+  if (blob) {
     try {
-      const json = JSON.parse(nextData.textContent);
-      const pp = json?.props?.pageProps;
-      const candidates = [pp?.chapters, pp?.data?.chapters, pp?.comic?.chapters, pp?.post?.chapters];
-      for (const list of candidates) {
+      const pp = JSON.parse(blob)?.props?.pageProps;
+      for (const list of [pp?.chapters, pp?.data?.chapters, pp?.comic?.chapters, pp?.post?.chapters]) {
         if (!Array.isArray(list) || !list.length) continue;
         const nums = list
-          .map((c) => c.chapter_number ?? c.number ?? c.chapter ?? parseInt(c.slug ?? "", 10) ?? 0)
+          .map((c) => parseInt(c.chapter_number ?? c.number ?? c.chapter ?? c.slug, 10))
           .filter((n) => n > 0);
         if (nums.length) return Math.max(...nums);
       }
     } catch (_) {}
   }
 
-  // CSS-selector fallback for traditional WordPress manga themes
-  const selectors = ["ul.clstyle li:first-child .chapternum", ".eph-num a", "a[href*='/chapter-']", "a[href*='/chapter/']"];
-  for (const sel of selectors) {
-    const el = doc.querySelector(sel);
-    if (!el) continue;
-    const href = el.href || el.getAttribute("href") || "";
-    const text = el.textContent || "";
-    const m = href.match(/chapter[-/](\d+)/i) || text.match(/chapter[\s\-]?(\d+)/i);
-    if (m) return parseInt(m[1], 10);
-  }
-  return null;
+  // Fallback: highest chapter number linked anywhere on the page. Scoped to href
+  // attributes so prose like "chapter 5 was great" cannot inflate the result.
+  const nums = [...html.matchAll(/href="[^"]*chapter[-/](\d+)/gi)].map((m) => parseInt(m[1], 10));
+  return nums.length ? Math.max(...nums) : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -390,54 +539,159 @@ function gistHeaders(pat) {
   };
 }
 
-async function syncToGist() {
-  const { settings, comics = {} } = await chrome.storage.local.get(["settings", "comics"]);
-  if (!settings?.githubPat || !settings?.gistId) return;
-  const payload = JSON.stringify({
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    settings: { darkModeGlobal: settings.darkModeGlobal, updateAlarmMinutes: settings.updateAlarmMinutes },
-    comics,
+// Merges two whole libraries. Every id present on either side survives unless a
+// tombstone says it was deleted after the last time anyone read it.
+function mergeComicMaps(remote, local, tombstones = {}) {
+  const out = {};
+  for (const id of new Set([...Object.keys(remote), ...Object.keys(local)])) {
+    const comic = remote[id] && local[id]
+      ? mergeComics(remote[id], local[id])
+      : (remote[id] ?? local[id]);
+    // A comic read again after being deleted is treated as re-added.
+    if (tombstones[id] && !((comic.lastVisited ?? "") > tombstones[id])) continue;
+    out[id] = comic;
+  }
+  return out;
+}
+
+function pruneTombstones(tombstones, comics) {
+  const cutoff = new Date(Date.now() - TOMBSTONE_TTL_MS).toISOString();
+  return Object.fromEntries(
+    Object.entries(tombstones).filter(([id, at]) => at > cutoff && !comics[id])
+  );
+}
+
+async function fetchGist(settings, etag) {
+  const res = await fetch(`https://api.github.com/gists/${settings.gistId}`, {
+    headers: { ...gistHeaders(settings.githubPat), ...(etag && { "If-None-Match": etag }) },
   });
+  if (res.status === 304) return { unchanged: true };
+  if (!res.ok) throw new Error(`GitHub API error: ${res.status}`);
+  const gist = await res.json();
+  const content = gist.files?.[GIST_FILENAME]?.content;
+  return { etag: res.headers.get("etag"), data: content ? JSON.parse(content) : null };
+}
+
+// Pushes are coalesced. This is a transient optimization, not state of record:
+// if the worker dies mid-push the next push or scheduled pull reconciles, since
+// every push re-reads storage and re-merges the remote.
+let pushInFlight = null;
+let pushDirty = false;
+
+function queueGistSync() {
+  if (pushInFlight) {
+    pushDirty = true;
+    return pushInFlight;
+  }
+  pushInFlight = (async () => {
+    try {
+      do {
+        pushDirty = false;
+        await syncToGist();
+      } while (pushDirty);
+    } finally {
+      pushInFlight = null;
+    }
+  })();
+  return pushInFlight;
+}
+
+// Stores a merge result, re-merging against current storage inside the lock.
+// Both sync directions span two network round trips, and a chapter read in that
+// window would otherwise be overwritten by the pre-request snapshot. Merging is
+// idempotent and order-independent, so folding it in again is free.
+async function adoptMerged(mergedComics, tombstones, etag) {
+  let count = 0;
+  await withComicsLock(async () => {
+    const { comics: current = {}, settings: currentSettings = {} } =
+      await chrome.storage.local.get(["comics", "settings"]);
+    const comics = mergeComicMaps(mergedComics, current, tombstones);
+    count = Object.keys(comics).length;
+    await chrome.storage.local.set({
+      comics,
+      deletedComics: tombstones,
+      settings: { ...currentSettings, gistEtag: etag ?? null },
+    });
+  });
+  return count;
+}
+
+// Read-merge-write. A blind PATCH of the local library was erasing whatever
+// another profile had pushed since this profile last pulled — the reason reading
+// in profile A never showed up in profile B.
+async function syncToGist() {
+  const { settings, comics = {}, deletedComics = {} } =
+    await chrome.storage.local.get(["settings", "comics", "deletedComics"]);
+  if (!settings?.githubPat || !settings?.gistId) return;
+
   try {
+    let remote = null;
+    try {
+      remote = (await fetchGist(settings)).data;
+    } catch (e) {
+      // Never overwrite a Gist we failed to read; a partial view is how data is lost.
+      console.warn("Gist read-before-write failed, skipping push:", e.message);
+      return;
+    }
+
+    const tombstones = { ...(remote?.deleted ?? {}), ...deletedComics };
+    const mergedComics = mergeComicMaps(remote?.comics ?? {}, comics, tombstones);
+    const prunedTombs = pruneTombstones(tombstones, mergedComics);
+
     const res = await fetch(`https://api.github.com/gists/${settings.gistId}`, {
       method: "PATCH",
-      headers: await gistHeaders(settings.githubPat),
-      body: JSON.stringify({ files: { [GIST_FILENAME]: { content: payload } } }),
+      headers: gistHeaders(settings.githubPat),
+      body: JSON.stringify({
+        files: {
+          [GIST_FILENAME]: {
+            content: JSON.stringify({
+              version: 1,
+              exportedAt: new Date().toISOString(),
+              settings: { darkModeGlobal: settings.darkModeGlobal, updateAlarmMinutes: settings.updateAlarmMinutes },
+              comics: mergedComics,
+              deleted: prunedTombs,
+            }),
+          },
+        },
+      }),
     });
-    if (!res.ok) console.warn("Gist sync failed:", res.status, await res.text());
+    if (!res.ok) {
+      console.warn("Gist sync failed:", res.status, await res.text());
+      return;
+    }
+    // The push already merged the remote, so adopt the result locally too —
+    // every push doubles as a pull.
+    await adoptMerged(mergedComics, prunedTombs, res.headers.get("etag"));
+    await updateBadge();
   } catch (e) {
     console.warn("Gist sync error:", e.message);
   }
 }
 
 async function pullFromGist() {
-  const { settings } = await chrome.storage.local.get("settings");
-  if (!settings?.githubPat || !settings?.gistId) return;
+  const { settings, comics = {}, deletedComics = {} } =
+    await chrome.storage.local.get(["settings", "comics", "deletedComics"]);
+  if (!settings?.githubPat || !settings?.gistId) return { ok: false, error: "sync not configured" };
+
   try {
-    const res = await fetch(`https://api.github.com/gists/${settings.gistId}`, {
-      headers: await gistHeaders(settings.githubPat),
-    });
-    if (!res.ok) return;
-    const gist = await res.json();
-    const content = gist.files?.[GIST_FILENAME]?.content;
-    if (!content) return;
-    const remote = JSON.parse(content);
-    const { comics: localComics = {} } = await chrome.storage.local.get("comics");
-    const merged = { ...remote.comics };
-    for (const [id, local] of Object.entries(localComics)) {
-      if (!merged[id] || local.lastVisited > (merged[id].lastVisited ?? "")) {
-        merged[id] = local;
-      }
-    }
-    await chrome.storage.local.set({ comics: merged });
+    // Conditional request: an unchanged Gist costs one 304 and no rate limit.
+    const { unchanged, etag, data } = await fetchGist(settings, settings.gistEtag);
+    if (unchanged) return { ok: true, unchanged: true };
+    if (!data) return { ok: false, error: "empty gist" };
+
+    const tombstones = { ...(data.deleted ?? {}), ...deletedComics };
+    const mergedComics = mergeComicMaps(data.comics ?? {}, comics, tombstones);
+    const count = await adoptMerged(mergedComics, pruneTombstones(tombstones, mergedComics), etag);
+    await updateBadge();
+    return { ok: true, count };
   } catch (e) {
     console.warn("Gist pull error:", e.message);
+    return { ok: false, error: e.message };
   }
 }
 
 async function gistInit(pat) {
-  const headers = await gistHeaders(pat);
+  const headers = gistHeaders(pat);
   const listRes = await fetch("https://api.github.com/gists?per_page=100", { headers });
   if (!listRes.ok) throw new Error(`GitHub API error: ${listRes.status}`);
   const list = await listRes.json();
@@ -491,52 +745,57 @@ async function handleMessage(msg) {
     }
     case "UPSERT_COMIC": {
       await upsertComic(msg.comic);
-      syncToGist();
+      queueGistSync();
       return { ok: true };
     }
     case "REMOVE_COMIC": {
-      const { comics = {} } = await chrome.storage.local.get("comics");
+      const { comics = {}, deletedComics = {} } =
+        await chrome.storage.local.get(["comics", "deletedComics"]);
       delete comics[msg.id];
-      await chrome.storage.local.set({ comics });
-      syncToGist();
+      // Record the deletion. Sync merges libraries now, so without a tombstone
+      // another profile's copy would just restore it on the next pull.
+      deletedComics[msg.id] = new Date().toISOString();
+      await chrome.storage.local.set({ comics, deletedComics });
+      queueGistSync();
       return { ok: true };
     }
     case "CHECK_UPDATES": {
-      await runUpdateCheck();
-      return { done: true };
+      // Returns immediately; the popup follows progress via storage.onChanged.
+      runUpdateCheck({ force: msg.force ?? false })
+        .catch((e) => console.warn("Update check failed:", e.message))
+        .finally(() => setCheckProgress(null));
+      return { started: true };
     }
     case "GIST_INIT": {
       const { settings } = await chrome.storage.local.get("settings");
       const gistId = await gistInit(msg.pat);
-      await chrome.storage.local.set({ settings: { ...settings, githubPat: msg.pat, gistId } });
+      await chrome.storage.local.set({ settings: { ...settings, githubPat: msg.pat, gistId, gistEtag: null } });
       await pullFromGist();
+      await scheduleAlarms();
       return { ok: true, gistId };
     }
     case "SAVE_SETTINGS": {
       const { settings } = await chrome.storage.local.get("settings");
-      const next = { ...settings, ...msg.settings };
-      await chrome.storage.local.set({ settings: next });
-      if (msg.settings.updateAlarmMinutes !== undefined) await scheduleAlarm();
+      await chrome.storage.local.set({ settings: { ...settings, ...msg.settings } });
+      await scheduleAlarms();
       return { ok: true };
     }
     case "AUTO_TRACK": {
       const { comics = {} } = await chrome.storage.local.get("comics");
       if (!comics[msg.scraped.id]) return { ok: false };
       await upsertComic(msg.scraped);
-      syncToGist();
+      queueGistSync();
       return { ok: true };
     }
     case "UPDATE_LATEST_CHAPTER": {
-      const { comics = {} } = await chrome.storage.local.get("comics");
-      if (!comics[msg.id]) return { ok: false };
+      const fields = {};
       if (msg.latestChapter != null) {
-        comics[msg.id].latestChapter = msg.latestChapter;
-        comics[msg.id].latestChecked = new Date().toISOString();
-        comics[msg.id].newChapters = Math.max(0, msg.latestChapter - (comics[msg.id].lastChapter ?? 0));
+        fields.latestChapter = msg.latestChapter;
+        fields.latestChecked = new Date().toISOString();
       }
-      if (msg.coverUrl) comics[msg.id].coverUrl = msg.coverUrl;
-      if (msg.url) comics[msg.id].url = msg.url;
-      await chrome.storage.local.set({ comics });
+      if (msg.coverUrl) fields.coverUrl = msg.coverUrl;
+      if (msg.url) fields.url = msg.url;
+      await patchComic(msg.id, fields);
       await updateBadge();
       return { ok: true };
     }
@@ -549,15 +808,24 @@ async function handleMessage(msg) {
       comics[msg.id].lastChapterUrl = null;
       await chrome.storage.local.set({ comics });
       await updateBadge();
-      syncToGist();
+      queueGistSync();
       return { ok: true };
+    }
+    case "SET_STATUS": {
+      const status = msg.status === STATUS_DROPPED ? STATUS_DROPPED : STATUS_TRACKED;
+      // Reading a dropped comic does not revive it — only this does. Picking up a
+      // chapter to see whether it got better should not silently re-subscribe you.
+      await patchComic(msg.id, { status, statusChangedAt: new Date().toISOString() });
+      await updateBadge();
+      queueGistSync();
+      return { ok: true, status };
     }
     case "ACKNOWLEDGE_COMIC": {
       const { comics = {} } = await chrome.storage.local.get("comics");
       if (!comics[msg.id]) return { ok: false };
-      comics[msg.id].acknowledgedChapter = comics[msg.id].latestChapter;
-      await chrome.storage.local.set({ comics });
+      await patchComic(msg.id, { acknowledgedChapter: comics[msg.id].latestChapter });
       await updateBadge();
+      queueGistSync();
       return { ok: true };
     }
     case "ACKNOWLEDGE_ALL": {
@@ -567,11 +835,11 @@ async function handleMessage(msg) {
       }
       await chrome.storage.local.set({ comics });
       await updateBadge();
+      queueGistSync();
       return { ok: true };
     }
     case "PULL_FROM_GIST":
-      await pullFromGist();
-      return { ok: true };
+      return await pullFromGist();
     case "PING":
       return { pong: true };
     case "DEBUG_INFO": {

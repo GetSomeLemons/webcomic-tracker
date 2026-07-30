@@ -15,6 +15,15 @@ since: "2026-07"
 
 The detail panel opens when a comic row is clicked. It shows rating, genres, review, and chapter history.
 
+## Actions
+
+`Save` · `Drop`/`Restore` · `Remove`. The middle button flips label and tooltip on
+`isDropped(c)` and is the only way to change status — see `drop-status.md`. Save
+persists rating/genres/review only; it never changes status.
+
+The list above the panel is split into **Tracked** and **Dropped** tabs
+(`renderTabs()`), each showing a count, with `activeStatus` holding the selection.
+
 ## Chapter History
 
 `renderChapterHistory(c)` renders chapters in reverse order (newest first) inside a 3-column grid.

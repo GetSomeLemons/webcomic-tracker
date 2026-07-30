@@ -133,6 +133,30 @@ body {
 .btn-ack:hover { border-color: var(--ok-color); color: var(--ok-color); }
 
 /* ── Filters ─────────────────────────────────────────────────────────────── */
+/* ── Status tabs ─────────────────────────────────────────────────────────── */
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  flex: 1;
+  padding: 7px 4px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.tab:hover { background: var(--surface-hover); }
+.tab--active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+.tab-count { font-size: 10px; opacity: 0.7; }
+
 .filters {
   display: flex;
   gap: 6px;
@@ -329,6 +353,16 @@ textarea {
   border: 1px solid var(--danger); border-radius: 4px; cursor: pointer; font-size: 12px;
 }
 .btn-danger:hover { background: var(--danger-light); }
+.btn-secondary {
+  padding: 6px 12px;
+  background: transparent; color: var(--text-muted);
+  border: 1px solid var(--border); border-radius: 4px; cursor: pointer; font-size: 12px;
+}
+.btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Dropped rows read as de-emphasised without becoming unreadable. */
+.comic-row--dropped .comic-title { color: var(--text-muted); }
+.comic-row--dropped .comic-thumb { opacity: 0.5; }
 
 /* ── Track button ────────────────────────────────────────────────────────── */
 .btn-track {

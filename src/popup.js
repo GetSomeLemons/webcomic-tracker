@@ -3,6 +3,10 @@
 let allComics = {};
 let currentId = null;
 let activeTab = null;
+let activeStatus = "tracked"; // which status tab the list is showing
+
+// Comics stored before the drop feature have no status field.
+const isDropped = (c) => c.status === "dropped";
 
 // ---------------------------------------------------------------------------
 // Init
@@ -17,7 +21,35 @@ document.addEventListener("DOMContentLoaded", async () => {
   checkTabRestriction();
   await checkSyncStatus();
   await showVersion();
+  await renderProgress();
+
+  // Render local data first, then pull in the background. Opening the popup is
+  // the most reliable moment to notice what another browser profile has read.
+  chrome.runtime.sendMessage({ type: "PULL_FROM_GIST" }).catch(() => {});
 });
+
+// The background worker writes results as it goes, so the list follows along
+// live instead of the popup blocking until every request has finished.
+chrome.storage.onChanged.addListener(async (changes, area) => {
+  if (area !== "local") return;
+  // Detail panel edits (rating, genres) live in allComics until Save, so a
+  // reload while it is open would silently drop them.
+  if (changes.comics && !currentId) await loadComics();
+  if (changes.checkProgress) await renderProgress();
+});
+
+async function renderProgress() {
+  const { checkProgress } = await chrome.storage.local.get("checkProgress");
+  const btn = document.getElementById("btn-check");
+  if (checkProgress?.running) {
+    btn.textContent = `Checking ${checkProgress.done}/${checkProgress.total}…`;
+    btn.disabled = true;
+  } else {
+    btn.textContent = "Check for updates";
+    btn.disabled = false;
+    updateLastChecked();
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Theme
@@ -142,6 +174,7 @@ async function showVersion() {
 async function loadComics() {
   const { comics } = await chrome.runtime.sendMessage({ type: "GET_ALL_COMICS" });
   allComics = comics ?? {};
+  renderTabs();
   renderList();
   renderGenreFilter();
   updateGenreDatalist();
@@ -150,7 +183,7 @@ async function loadComics() {
 
 function renderUpdatesNotice() {
   const unread = Object.values(allComics).filter(
-    (c) => c.latestChapter != null && c.latestChapter > (c.acknowledgedChapter ?? c.lastChapter ?? 0)
+    (c) => !isDropped(c) && c.latestChapter != null && c.latestChapter > (c.acknowledgedChapter ?? c.lastChapter ?? 0)
   );
   const section = document.getElementById("notice-updates");
   const list = document.getElementById("updates-list");
@@ -176,30 +209,45 @@ function renderUpdatesNotice() {
 // List rendering
 // ---------------------------------------------------------------------------
 
+function renderTabs() {
+  const dropped = Object.values(allComics).filter(isDropped).length;
+  document.getElementById("count-tracked").textContent = Object.keys(allComics).length - dropped || "";
+  document.getElementById("count-dropped").textContent = dropped || "";
+  document.querySelectorAll("#tabs .tab").forEach((t) => {
+    t.classList.toggle("tab--active", t.dataset.status === activeStatus);
+  });
+}
+
 function renderList() {
   const search = document.getElementById("search").value.toLowerCase();
   const genre = document.getElementById("genre-filter").value;
   const list = document.getElementById("comic-list");
+  const showingDropped = activeStatus === "dropped";
 
-  let comics = Object.values(allComics);
+  let comics = Object.values(allComics).filter((c) => isDropped(c) === showingDropped);
   if (search) comics = comics.filter((c) => c.title.toLowerCase().includes(search));
   if (genre) comics = comics.filter((c) => c.genres?.includes(genre));
   comics.sort((a, b) => (b.rating ?? -1) - (a.rating ?? -1));
 
   if (!comics.length) {
-    list.innerHTML = `<div class="empty">${search || genre ? "No matches." : "No comics saved yet.<br>Press Alt+S or Track on a comic page."}</div>`;
+    const empty = search || genre
+      ? "No matches."
+      : showingDropped
+        ? "Nothing dropped.<br>Open a comic and hit Drop to park it here."
+        : "No comics saved yet.<br>Press Alt+S or Track on a comic page.";
+    list.innerHTML = `<div class="empty">${empty}</div>`;
     return;
   }
 
   list.innerHTML = comics.map((c) => {
     const rating = c.rating ? `★${c.rating}` : "★";
     const lastCh = c.lastChapter != null ? `Ch ${c.lastChapter}` : "";
-    const newChBadge = c.latestChapter != null && c.latestChapter > (c.lastChapter ?? 0)
+    const newChBadge = !isDropped(c) && c.latestChapter != null && c.latestChapter > (c.lastChapter ?? 0)
       ? ` <span class="badge-new">&#8594; ${c.latestChapter}</span>` : "";
     const age = c.lastVisited ? timeAgo(c.lastVisited) : "";
     const thumb = c.coverUrl ? `<img class="comic-thumb" src="${esc(c.coverUrl)}" alt="">` : "";
     return `
-      <div class="comic-row" data-id="${c.id}">
+      <div class="comic-row${isDropped(c) ? " comic-row--dropped" : ""}" data-id="${c.id}">
         ${thumb}
         <div class="comic-row-body">
           <div class="comic-row-top">
@@ -243,7 +291,13 @@ function showDetail(id) {
   const titleEl = document.getElementById("detail-title");
   titleEl.textContent = c.title;
   titleEl.onclick = () => chrome.tabs.create({ url: c.url });
-  document.getElementById("detail-site").textContent = `${c.site ?? ""} · Added ${formatDate(c.addedAt)}`;
+  document.getElementById("detail-site").textContent =
+    `${c.site ?? ""} · Added ${formatDate(c.addedAt)}${isDropped(c) ? " · Dropped" : ""}`;
+  const dropBtn = document.getElementById("btn-drop");
+  dropBtn.textContent = isDropped(c) ? "Restore" : "Drop";
+  dropBtn.title = isDropped(c)
+    ? "Track this again — it returns to update checks"
+    : "Keep the history but stop checking for new chapters";
   const coverEl = document.getElementById("detail-cover");
   if (c.coverUrl) { coverEl.src = c.coverUrl; coverEl.style.display = ""; }
   else coverEl.style.display = "none";
@@ -452,22 +506,39 @@ function bindEvents() {
   document.getElementById("search").addEventListener("input", renderList);
   document.getElementById("genre-filter").addEventListener("change", renderList);
 
+  document.querySelectorAll("#tabs .tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      activeStatus = tab.dataset.status;
+      renderTabs();
+      renderList();
+    });
+  });
+
+  document.getElementById("btn-drop").addEventListener("click", async () => {
+    const next = isDropped(allComics[currentId]) ? "tracked" : "dropped";
+    await chrome.runtime.sendMessage({ type: "SET_STATUS", id: currentId, status: next });
+    // Land on the tab the comic just moved to, so it does not appear to vanish.
+    activeStatus = next;
+    const id = currentId;
+    await loadComics();
+    showDetail(id);
+  });
+
+  // Clicking explicitly means "check now", so ignore the freshness window.
   document.getElementById("btn-check").addEventListener("click", async () => {
     const btn = document.getElementById("btn-check");
     btn.textContent = "Checking…";
-    await chrome.runtime.sendMessage({ type: "CHECK_UPDATES" });
-    await loadComics();
-    updateLastChecked();
-    btn.textContent = "Check for updates";
+    btn.disabled = true;
+    await chrome.runtime.sendMessage({ type: "CHECK_UPDATES", force: true });
   });
 
   document.getElementById("btn-pull").addEventListener("click", async () => {
     const btn = document.getElementById("btn-pull");
     btn.textContent = "Syncing…";
     btn.disabled = true;
-    await chrome.runtime.sendMessage({ type: "PULL_FROM_GIST" });
+    const res = await chrome.runtime.sendMessage({ type: "PULL_FROM_GIST" });
     await loadComics();
-    btn.textContent = "↓ Sync";
+    btn.textContent = res?.ok ? "↓ Sync" : "✗ Sync failed";
     btn.disabled = false;
   });
 
