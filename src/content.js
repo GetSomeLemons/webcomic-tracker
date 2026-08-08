@@ -1,50 +1,8 @@
 // Injected into all pages.
-// Handles: comic scraping, toast notifications, element pick mode, key bindings.
-
-// ---------------------------------------------------------------------------
-// Scraper
-// ---------------------------------------------------------------------------
-
-// Group 3 captures the separator ("/chapter/12" vs "/chapter-12") — it is part
-// of the comic's address, so it is stored instead of guessed at link time.
-const ASURA_CHAPTER_RE = /asurascans\.com\/(manga|comics)\/([^/]+)\/chapter([/-])(\d+)/i;
-const ASURA_INDEX_RE = /asurascans\.com\/(manga|comics)\/([^/]+)\/?$/i;
-
-// stableSlug(), parseComicUrl() and friends live in urls.js, loaded before this
-// file by the content_scripts entry.
-
-function scrapeAsura() {
-  const chapterMatch = location.href.match(ASURA_CHAPTER_RE);
-  const indexMatch = location.href.match(ASURA_INDEX_RE);
-  if (!chapterMatch && !indexMatch) return null;
-  const match = chapterMatch || indexMatch;
-  const pathType = match[1];
-  const slug = match[2];
-  const chapter = chapterMatch ? parseInt(chapterMatch[4], 10) : null;
-  const titleEl = [
-    document.querySelector(`.breadcrumb a[href*='/${pathType}/']`),
-    document.querySelector(".entry-title"),
-    document.querySelector("h1"),
-  ].find((e) => e?.textContent?.trim());
-  const rawTitle = titleEl?.textContent.trim() || document.title.replace(/\s+[-–—|·].*$/, "").trim();
-  const title = rawTitle.replace(/\s+chapter\s*\d+.*/i, "").trim();
-  return {
-    id: `asura__${stableSlug(slug)}`, title, chapter, site: "asurascans.com",
-    // The address, split: every link is rebuilt from these two fields. The
-    // origin is fixed, not taken from location: host_permissions only covers
-    // the apex, so storing a "www." host would break background update fetches.
-    urlRoot: `https://asurascans.com/${pathType}`, slug,
-    ...(chapterMatch && { chapterSep: chapterMatch[3] }),
-    // Only grab cover from the index page; chapter pages may have a different og:image
-    ...(!chapterMatch && { coverUrl: document.querySelector('meta[property="og:image"]')?.content ?? null }),
-  };
-}
-
-function scrapeGeneric() {
-  const title = document.title.replace(/\s*[|–\-].*$/, "").trim() || location.hostname;
-  const id = "generic__" + (location.hostname + location.pathname).replace(/[^a-z0-9]/gi, "").slice(0, 24);
-  return { id, title, chapter: null, indexUrl: location.href, site: location.hostname };
-}
+// Handles: toast notifications, element pick mode, key bindings, auto-tracking.
+//
+// The scraper itself lives in scrape.js and the address helpers in urls.js, both
+// loaded before this file by the content_scripts entry.
 
 // ---------------------------------------------------------------------------
 // Dark mode
@@ -276,7 +234,7 @@ setupKeyBindings();
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === "SCRAPE_COMIC") {
-    sendResponse(scrapeAsura() ?? scrapeGeneric());
+    sendResponse(scrapeComic());
   } else if (msg.type === "SHOW_TOAST") {
     showToast(msg.msg);
     sendResponse({ ok: true });
@@ -296,8 +254,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 // Auto-track: when navigating to a chapter page, update known comics silently
 async function autoTrack() {
-  const scraped = scrapeAsura();
-  if (!scraped || scraped.chapter == null) return;
+  const scraped = scrapeComic();
+  if (scraped.chapter == null) return;
   const { comics = {} } = await chrome.storage.local.get("comics");
   if (!comics[scraped.id]) return;
   const hist = comics[scraped.id].chapterHistory ?? [];
@@ -321,19 +279,27 @@ function latestChapterFromIndexDom(slug) {
   return nums.length ? Math.max(...nums) : null;
 }
 
+// Index page only. On a chapter page these would fire on every page turn.
+function indexAddress() {
+  const addr = parseComicUrl(location.href);
+  return addr?.chapter == null ? addr : null;
+}
+
 async function checkIndexForUpdates() {
-  const indexMatch = location.href.match(ASURA_INDEX_RE);
-  if (!indexMatch) return;
-  const slug = indexMatch[2];
-  const id = `asura__${stableSlug(slug)}`;
+  const addr = indexAddress();
+  if (!addr) return;
+  const slug = addr.slug;
+  const id = comicId(siteFor(addr.site), slug);
   const { comics = {} } = await chrome.storage.local.get("comics");
   if (!comics[id]) return;
 
   const latestChapter = latestChapterFromIndexDom(slug);
   const coverUrl = document.querySelector('meta[property="og:image"]')?.content ?? null;
   // The page in front of us carries the current slug, so a rotated suffix
-  // self-heals here too — not only during an update check.
-  const address = { urlRoot: `https://asurascans.com/${indexMatch[1]}`, slug };
+  // self-heals here too — not only during an update check. Only the two
+  // address-of-record fields travel; the rest of the parse does not belong on
+  // the stored comic.
+  const address = { site: addr.site, urlRoot: addr.urlRoot, slug };
 
   const chapterUnchanged = latestChapter === null || latestChapter === comics[id].latestChapter;
   const coverUnchanged = !coverUrl || coverUrl === comics[id].coverUrl;
@@ -352,10 +318,10 @@ async function checkIndexForUpdates() {
 // dropped it — before sinking time into it. Index pages only: firing on every
 // chapter page would be noise while reading.
 async function showStatusToast() {
-  const indexMatch = location.href.match(ASURA_INDEX_RE);
-  if (!indexMatch) return;
+  const addr = indexAddress();
+  if (!addr) return;
   const { comics = {} } = await chrome.storage.local.get("comics");
-  const comic = comics[`asura__${stableSlug(indexMatch[2])}`];
+  const comic = comics[comicId(siteFor(addr.site), addr.slug)];
   if (!comic) return;
 
   const read = comic.lastChapter != null ? `read up to Ch ${comic.lastChapter}` : "nothing read yet";
@@ -365,7 +331,7 @@ async function showStatusToast() {
   }
   // Prefer the count from the page in front of us over the stored one, which the
   // concurrent index check may not have refreshed yet.
-  const latest = latestChapterFromIndexDom(indexMatch[2]) ?? comic.latestChapter;
+  const latest = latestChapterFromIndexDom(addr.slug) ?? comic.latestChapter;
   const behind = latest != null ? latest - (comic.lastChapter ?? 0) : 0;
   showToast(`✓ Tracked · ${read}${behind > 0 ? ` · ${behind} new` : ""}`, "#4a9eff");
 }
@@ -374,8 +340,9 @@ async function showStatusToast() {
 // Navigation
 // ---------------------------------------------------------------------------
 
-// AsuraScans is a Next.js SPA: the content script runs once per full page load,
-// so everything URL-dependent has to re-run on client-side navigation too.
+// Both supported sites are SPAs (AsuraScans on Next.js, Qi Manga on Angular):
+// the content script runs once per full page load, so everything URL-dependent
+// has to re-run on client-side navigation too.
 function onNavigate() {
   autoTrack();
   checkIndexForUpdates();

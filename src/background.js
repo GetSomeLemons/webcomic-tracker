@@ -68,10 +68,12 @@ async function applyComicMigration() {
   const { comics = {} } = await chrome.storage.local.get("comics");
   let changed = false;
   const next = {};
+  // The only pre-table ids in the wild are AsuraScans', hence the one lookup.
+  const asura = siteFor("asurascans.com");
   for (const [id, stored] of Object.entries(comics)) {
     const comic = splitAddress(stored);
     if (comic !== stored) changed = true;
-    const newId = id.startsWith("asura__") ? `asura__${stableSlug(id.slice(7))}` : id;
+    const newId = id.startsWith("asura__") ? comicId(asura, id.slice(7)) : id;
     if (newId === id) {
       if (!next[id]) next[id] = comic;
       continue;
@@ -86,12 +88,16 @@ async function applyComicMigration() {
 // URLs pointed at the slug of the day: the index one was rewritten on every
 // visit, the chapter one never was, which is why "open where I left off" landed
 // on a dead link. Chapter links are derived from the history from now on.
-// Generic (non-AsuraScans) comics keep `url` — they have no slug to rotate.
+// Generic (unsupported-site) comics keep `url` — they have no slug to rotate.
 function splitAddress(comic) {
   if (!("url" in comic) && !("lastChapterUrl" in comic)) return comic; // already split
-  const address = comic.slug ? null : parseComicUrl(comic.url);
-  if (!address && !comic.slug) return comic; // generic site: `url` is the address
-  const chapterSep = comic.chapterSep ?? comic.lastChapterUrl?.match(/\/chapter([/-])\d+/)?.[1];
+  const parsed = comic.slug ? null : parseComicUrl(comic.url);
+  if (!parsed && !comic.slug) return comic; // generic site: `url` is the address
+  // Only the address of record is adopted; the rest of the parse (chapter,
+  // and a null chapterSep that would clobber a good one) stays out.
+  const address = parsed && { site: parsed.site, urlRoot: parsed.urlRoot, slug: parsed.slug };
+  const chapterSep = comic.chapterSep ?? parsed?.chapterSep
+    ?? comic.lastChapterUrl?.match(/\/chapter([/-])\d+/)?.[1];
   const { url, lastChapterUrl, ...rest } = comic;
   return { ...rest, ...address, ...(chapterSep && { chapterSep }) };
 }
@@ -203,11 +209,18 @@ async function saveCurrentTab(tabId) {
   try {
     scraped = await chrome.tabs.sendMessage(tabId, { type: "SCRAPE_COMIC" });
   } catch (_) {
-    // Content script not injected yet — use scripting API as fallback
+    // Content script not injected yet — inject the scraper's own files rather
+    // than keeping a second, self-contained copy of it here.
     try {
+      // Tolerated: if the files already sit in this tab's isolated world the
+      // `const SITES` redeclaration throws — and scrapeComic is already there.
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ["urls.js", "scrape.js"],
+      }).catch(() => {});
       const results = await chrome.scripting.executeScript({
         target: { tabId },
-        func: scrapePageInline,
+        func: () => scrapeComic(),
       });
       scraped = results[0]?.result ?? null;
     } catch (e2) {
@@ -230,38 +243,6 @@ async function saveCurrentTab(tabId) {
   const { comics = {} } = await chrome.storage.local.get("comics");
   sendToast(tabId, `Saved: ${label}${isDropped(comics[scraped.id]) ? " · still dropped" : ""}`);
   return scraped;
-}
-
-// Inline scraper injected via scripting API when content script isn't loaded.
-// Must be self-contained (no closures, no external references).
-function scrapePageInline() {
-  const chapterMatch = location.href.match(/asurascans\.com\/(manga|comics)\/([^/]+)\/chapter([/-])(\d+)/i);
-  const indexMatch = location.href.match(/asurascans\.com\/(manga|comics)\/([^/]+)\/?$/i);
-  const match = chapterMatch || indexMatch;
-  const slug = match?.[2];
-  if (!slug) {
-    const title = document.title.replace(/\s*[|–\-].*$/, "").trim() || location.hostname;
-    const id = "generic__" + (location.hostname + location.pathname).replace(/[^a-z0-9]/gi, "").slice(0, 24);
-    return { id, title, chapter: null, indexUrl: location.href, site: location.hostname };
-  }
-  const pathType = match[1];
-  const chapter = chapterMatch ? parseInt(chapterMatch[4], 10) : null;
-  const titleEl = [
-    document.querySelector(`.breadcrumb a[href*="/${pathType}/"]`),
-    document.querySelector(".entry-title"),
-    document.querySelector("h1"),
-  ].find((e) => e?.textContent?.trim());
-  const rawTitle = titleEl?.textContent.trim() || document.title.replace(/\s+[-–—|·].*$/, "").trim();
-  const title = rawTitle.replace(/\s+chapter\s*\d+.*/i, "").trim();
-  // AsuraScans rotates a trailing hex suffix on slugs (e.g. "-30e93729") — strip
-  // it so the id stays stable across the rotation (see urls.js stableSlug).
-  const stableSlugPart = slug.replace(/-[0-9a-f]{6,10}$/i, "");
-  return {
-    id: `asura__${stableSlugPart}`, title, chapter, site: "asurascans.com",
-    urlRoot: `https://asurascans.com/${pathType}`, slug,
-    ...(chapterMatch && { chapterSep: chapterMatch[3] }),
-    ...(!chapterMatch && { coverUrl: document.querySelector('meta[property="og:image"]')?.content ?? null }),
-  };
 }
 
 function sendToast(tabId, msg) {
@@ -315,9 +296,9 @@ async function applyUpsert(scraped) {
       comics[id].lastChapter = Math.max(comics[id].lastChapter ?? 0, scraped.chapter);
     }
     comics[id].lastVisited = now;
-    // Self-heal the address: AsuraScans' slug suffix rotates over time, so any
-    // fresh visit replaces a now-stale slug with the current one. One write —
-    // every index and chapter link is derived from it.
+    // Self-heal the address: on sites whose slug suffix rotates, any fresh visit
+    // replaces a now-stale slug with the current one. One write — every index
+    // and chapter link is derived from it.
     if (scraped.slug) Object.assign(comics[id], { urlRoot: scraped.urlRoot, slug: scraped.slug });
     else if (scraped.indexUrl) comics[id].url = scraped.indexUrl;
     if (scraped.chapterSep) comics[id].chapterSep = scraped.chapterSep;
@@ -330,8 +311,8 @@ async function applyUpsert(scraped) {
     comics[id] = {
       id,
       title: scraped.title,
-      // AsuraScans comics are addressed by urlRoot + slug; anything else keeps
-      // the page URL, having no rotating slug to split off.
+      // Supported-site comics are addressed by urlRoot + slug; anything else
+      // keeps the page URL, having no slug to split off.
       ...(scraped.slug ? { urlRoot: scraped.urlRoot, slug: scraped.slug } : { url: scraped.indexUrl }),
       ...(scraped.chapterSep && { chapterSep: scraped.chapterSep }),
       site: scraped.site,
@@ -394,7 +375,12 @@ async function runUpdateCheck({ force = false } = {}) {
   const { comics = {} } = await chrome.storage.local.get("comics");
   const now = Date.now();
   const toCheck = Object.values(comics).filter((c) => {
-    if (c.site !== "asurascans.com" || !indexUrl(c)) return false;
+    // A known site and a split address. The `slug` condition keeps old generic__
+    // entries out even once their host becomes supported: their stored `url` may
+    // be a chapter page, which would make the check read the wrong number.
+    // ponytail: one Alt+S on the page converts such an entry properly; write a
+    // migration only if there turn out to be many.
+    if (!siteFor(c.site) || !c.slug || !indexUrl(c)) return false;
     if (isDropped(c)) return false; // the whole point of dropping
     if (force || !c.latestChecked) return true;
     return now - new Date(c.latestChecked).getTime() > FRESH_MS;
@@ -448,7 +434,9 @@ async function applyCheckResult(id, { latestChapter, coverUrl, address }) {
   // The check already has the current page in hand, so this is the natural place
   // to notice a rotated slug — the user should not have to visit the site for
   // their stored links to start working again.
-  if (ownsAddress(id, address)) Object.assign(fields, address);
+  // `address` carries the whole parse; only the two address-of-record fields
+  // belong on the comic. Copying the rest would overwrite chapterSep with null.
+  if (ownsAddress(id, address)) Object.assign(fields, { urlRoot: address.urlRoot, slug: address.slug });
   if (!Object.keys(fields).length) return;
   // A failed write costs one comic's result, not the rest of the run.
   await patchComic(id, fields).catch((e) => console.warn("Could not store result for", id, e.message));
@@ -497,7 +485,7 @@ async function checkComicViaTab(comic) {
   if (!slug) return { latestChapter: null, coverUrl: null, address: null };
   // Match chapter links on the suffix-free part of the slug: if the tab was
   // redirected to a rotated slug, the stored one no longer appears in any href.
-  const linkSlug = stableSlug(slug);
+  const linkSlug = stableSlug(siteFor(comic.site), slug);
 
   return new Promise((resolve) => {
     let tabId = null;

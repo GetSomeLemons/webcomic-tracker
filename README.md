@@ -5,7 +5,7 @@ A Manifest V3 browser extension for Chrome and Edge. Tracks webcomics you're rea
 ## Features
 
 - **Track any page**: save a URL with one click or `Alt+S`
-- **AsuraScans support**: auto-detects title, chapter number, and cover image
+- **Supported sites**: auto-detects title, chapter number, and cover image on AsuraScans and Qi Manga
 - **Chapter history**: logs every chapter you read with timestamps
 - **Update checks**: poll for new chapters manually or on a schedule
 - **Ratings and genres**: rate 1-10, tag with custom genres, write a review
@@ -30,7 +30,7 @@ No build step.
 
 Press `Alt+S` on any comic page, or open the popup and click **Track**.
 
-On AsuraScans the title and chapter are detected automatically. On other sites the page title and URL are saved.
+On a supported site the title and chapter are detected automatically. On other sites the page title and URL are saved.
 
 ### Checking for updates
 
@@ -58,7 +58,8 @@ Open the popup → **⌨** → **Pick element on page**. Click the element you w
 | `scripting` | Inject scraper on pages not yet loaded |
 | `tabs` | Open comic/chapter links |
 | `api.github.com` | GitHub Gist sync |
-| `asurascans.com` | Chapter update checks via background tab |
+| `asurascans.com` | Chapter update checks |
+| `qimanga.com` | Chapter update checks |
 
 ## Privacy
 

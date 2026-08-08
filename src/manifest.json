@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Webcomic Tracker",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Track webcomics, chapters, ratings, and genres. Syncs via GitHub Gist.",
   "action": {
     "default_popup": "popup.html",
@@ -19,14 +19,15 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["urls.js", "content.js"],
+      "js": ["urls.js", "scrape.js", "content.js"],
       "run_at": "document_idle"
     }
   ],
   "permissions": ["storage", "alarms", "activeTab", "scripting", "tabs"],
   "host_permissions": [
     "https://api.github.com/*",
-    "https://asurascans.com/*"
+    "https://asurascans.com/*",
+    "https://qimanga.com/*"
   ],
   "commands": {
     "save-comic": {

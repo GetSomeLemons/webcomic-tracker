@@ -26,6 +26,7 @@ Map from code areas to documentation articles.
 
 | Article | Covers |
 |---------|--------|
+| `site-adapters.md` | The `SITES` table: row fields, derived URL pattern, how to add a comic site |
 
 ## guides/
 

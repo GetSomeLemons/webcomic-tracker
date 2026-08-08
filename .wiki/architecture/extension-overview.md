@@ -3,8 +3,8 @@ id: architecture-extension-overview
 title: Extension Architecture Overview
 category: architecture
 tags: [mv3, architecture, service-worker, content-script, storage]
-related: [features-dark-mode, features-gist-sync]
-context_keys: [manifest.json, background.js, content.js, popup.js, options.js]
+related: [features-dark-mode, features-gist-sync, concepts-site-adapters]
+context_keys: [manifest.json, background.js, content.js, scrape.js, urls.js, popup.js, options.js]
 audience: [developer, ai]
 level: intermediate
 status: current
@@ -21,16 +21,24 @@ Webcomic Tracker is a Manifest V3 browser extension for Chrome and Edge. It save
 |------|------|
 | `manifest.json` | Permissions, commands (Alt+S), content_scripts, host_permissions |
 | `background.js` | Service worker: onCommand, alarms, Gist sync, message hub |
-| `content.js` | Injected into pages: AsuraScans scraper, dark mode, toast, key bindings |
+| `content.js` | Injected into pages: dark mode, toast, key bindings, auto-tracking |
+| `scrape.js` | The page scraper: `scrapeComic`, `scrapeGeneric` |
 | `popup.js` | Popup UI: comic list, genre filter, detail/edit panel |
 | `options.js` | Settings page: GitHub PAT, sync init, update interval |
-| `urls.js` | Comic addresses: `stableSlug`, `parseComicUrl`, `indexUrl`, `chapterUrl`, `lastReadChapter` |
+| `urls.js` | The `SITES` table plus comic addresses: `parseComicUrl`, `comicId`, `siteFor`, `stableSlug`, `indexUrl`, `chapterUrl`, `lastReadChapter` |
 
 `urls.js` is loaded by all three contexts — `importScripts` in the service
 worker, first entry in the `content_scripts` array, and a `<script>` before
-`popup.js` — so links are built the same way everywhere. `scrapePageInline`
-still carries its own copy of the slug regex: it is serialized into the page and
-cannot reference anything outside itself.
+`popup.js` — so links are built the same way everywhere.
+
+`scrape.js` is split out of `content.js` so the service worker can inject it as a
+file when the content script is missing (see the fallback in `saveCurrentTab`),
+without dragging in `content.js`'s listeners and observers. It holds no top-level
+statements, because it is evaluated a second time in such tabs. There is no
+second copy of the scraper any more.
+
+Which sites are understood is entirely the `SITES` table in `urls.js` — see
+[[concepts-site-adapters]] for the row fields and for how to add one.
 
 ## Message Protocol
 
@@ -38,7 +46,7 @@ All messages follow `{ type: string, ...payload }`.
 
 | Sender | Receiver | Type | Response |
 |--------|----------|------|----------|
-| background | content | `SCRAPE_COMIC` | `{ title, slug, chapter, url } \| null` |
+| background | content | `SCRAPE_COMIC` | `{ id, title, site, urlRoot, slug, chapter }` |
 | popup | background | `GET_ALL_COMICS` | `{ comics }` |
 | popup | background | `UPSERT_COMIC` | `{ ok }` |
 | popup | background | `REMOVE_COMIC` | `{ ok }` |
@@ -76,12 +84,14 @@ edits live in the popup's `allComics` until Save, and a reload would drop them.
     updateAlarmMinutes: 60
   },
   comics: {
+    // "<site.id>__<stableSlug>" — "asura__solo-leveling", "qi__tower-of-god"
     "asura__<slug>": {
       id, title,
       urlRoot: "https://asurascans.com/manga",   // origin + path type
-      slug: "solo-leveling-30e93729",            // rotates; the only field that does
-      chapterSep: "/",         // "/chapter/12" vs "/chapter-12"; defaults to "/"
-      url,                     // generic (non-Asura) sites only: page URL as-is
+      slug: "solo-leveling-30e93729",            // rotates on sites that do that
+      chapterSep: "/",         // "/chapter/12" vs "/chapter-12"; falls back to
+                               // the site's default, then to "/"
+      url,                     // unsupported sites only: page URL as-is
       lastChapter: 187,        // furthest chapter read by the user
       lastVisited,             // ISO timestamp
       chapterHistory: [{ chapter, visitedAt }],   // capped at 30 entries
@@ -108,10 +118,15 @@ There is no stored `newChapters` field — it was written but never read.
 
 ### Addresses are stored split, links are derived
 
-No whole URL is stored for an AsuraScans comic. `urlRoot` + `slug` (+ `chapterSep`)
-are the record; `indexUrl(comic)` and `chapterUrl(comic, n)` rebuild links on
-every read. A slug rotation is therefore one field write, after which every link
-— index, each history entry, the Open button — is correct again.
+No whole URL is stored for a comic on a supported site. `urlRoot` + `slug`
+(+ `chapterSep`) are the record; `indexUrl(comic)` and `chapterUrl(comic, n)`
+rebuild links on every read. A slug rotation is therefore one field write, after
+which every link — index, each history entry, the Open button — is correct again.
+
+`chapterSep` is only written when a chapter page was actually seen. A comic
+tracked from its index page alone falls back to its site's `chapterSep`, then to
+`"/"`. That fallback is load-bearing: on qimanga `/chapter/88` is a hard 404, so
+without it every chapter cell in the detail panel would be a dead link.
 
 Pre-1.5 storage held `url` (index) and `lastChapterUrl` instead. They rotted
 independently: `url` was rewritten on each visit, `lastChapterUrl` never was, so
@@ -135,17 +150,25 @@ lands during an update check, or between the check's own parallel workers.
 Alt+S
   → background.js onCommand("save-comic")
   → chrome.tabs.query(active) → sendMessage(SCRAPE_COMIC)
-  → content.js scrapeAsura() → { title, slug, chapter, url }
+  → scrape.js scrapeComic() → { id, title, site, urlRoot, slug, chapter }
   → background.js upsertComic() → chrome.storage.local
   → syncToGist()
 ```
+
+If the content script is not in the tab (a page opened before the extension was
+reloaded), `saveCurrentTab()` injects `urls.js` + `scrape.js` with
+`executeScript({ files })` and then calls `scrapeComic()` in a second call. The
+first call is allowed to fail: re-injecting into a tab that already has them
+throws on the `const SITES` redeclaration, and in that case the function is
+already there.
 
 ## Flow: Update Check
 
 ```
 chrome.alarms "update-check" (60 min, only if settings.autoUpdate === true)
   → runUpdateCheck()
-  → skip dropped comics, and any whose latestChecked is under 6 h old (unless force)
+  → skip dropped comics, comics on unsupported sites, comics with no split
+    address, and any whose latestChecked is under 6 h old (unless force)
   → pass 1: fetch(index) for 5 comics at a time
             → extractLatestChapter(html)   // text parsing, no DOM
             → parseComicUrl(res.url) or the canonical link → fresh slug
@@ -178,8 +201,11 @@ on when sync is configured). `scheduleAlarms()` owns both.
 - Long-running background work must persist incrementally. The worker can be terminated mid-run, and anything only held in memory or written at the end is gone.
 - `content_scripts` with `<all_urls>` does not require broad host permissions (injection only, no fetch).
 - PAT is stored as plaintext in `chrome.storage.local`. Use a fine-grained Gist-scoped token.
-- AsuraScans DOM selectors may change. A selector array is used; first match wins.
-- AsuraScans uses Next.js SPA routing. `autoTrack()` detects URL changes via `MutationObserver` to handle client-side chapter navigation without a full page reload.
-- AsuraScans slugs carry a rotating hex suffix (e.g. `-30e93729` → `-a80d257e`), likely anti-scraper. `stableSlug()` (`urls.js`, duplicated inline in `background.js`'s `scrapePageInline`) strips it via `/-[0-9a-f]{6,10}$/i` so the comic's storage id (`asura__<stableSlug>`) survives the rotation instead of spawning a duplicate entry. The stored `slug` is refreshed from any page visit (`upsertComic`, `checkIndexForUpdates`) and from every update check. Not all sites/comics carry this suffix; the regex is a no-op when absent.
-- Slug refresh during a check depends on AsuraScans redirecting (or serving a canonical link) for a rotated slug. If it hard-404s instead, that comic's check yields nothing and the slug is only repaired by the user visiting the comic again — nothing else knows the new suffix.
+- Site DOM selectors change. `titleSelectors` is an **ordered array**, tried first-with-text-wins — not a comma-joined selector, which `querySelector` would resolve by document order and so let a header's `sr-only` h1 beat the breadcrumb. AsuraScans has already dropped the `.breadcrumb` and `.entry-title` elements its first two selectors target; they are kept because a miss costs nothing.
+- Both supported sites are SPAs (AsuraScans on Next.js, Qi Manga on Angular). `onNavigate()` re-runs on client-side routing via a `MutationObserver` watching `location.href`, since the content script only runs once per full page load.
+- A site's slug may carry a rotating suffix — AsuraScans uses a hex one (`-30e93729` → `-a80d257e`), likely anti-scraper. That is the `slugSuffix` field of its `SITES` row, not a universal rule; `stableSlug()` is a no-op for sites without it. Stripping it keeps the storage id (`asura__<stableSlug>`) stable across a rotation instead of spawning a duplicate entry. The stored `slug` is refreshed from any page visit (`upsertComic`, `checkIndexForUpdates`) and from every update check.
+- Slug refresh during a check depends on the site redirecting (or serving a canonical link) for a rotated slug. If it hard-404s instead, that comic's check yields nothing and the slug is only repaired by the user visiting the comic again — nothing else knows the new suffix.
+- The parse from `parseComicUrl()` carries more than the address of record (`chapter`, and a `chapterSep` that is `null` on an index page). Never `Object.assign` it wholesale onto a comic — `applyCheckResult()` and `splitAddress()` both pick out `urlRoot` and `slug` explicitly, because a `null` would clobber a good separator.
+- `chrome.runtime.sendMessage` serializes as JSON, not structured clone. That is why `parseComicUrl()` returns `site` as a host string: a `SITES` descriptor would arrive with its `RegExp` fields as empty objects.
+- qimanga.com answers 403 to a default user agent and 400 to the `www.` host. The service worker's `fetch` sends a Chrome UA and reaches the apex fine; a scripted `curl` needs `-A`.
 - `mergeComics` resolves the slug through the generic "most recently visited copy wins" rule, so a profile that read a chapter but has an older slug can push a stale one over a fresher one. It self-corrects on that profile's next check or visit rather than sticking.
