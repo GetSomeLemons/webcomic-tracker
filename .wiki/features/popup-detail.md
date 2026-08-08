@@ -24,6 +24,32 @@ rating/genres/review only; it never changes status.
 The list above the panel is split into one tab per status (`renderTabs()`), each
 showing a count, with `activeStatus` holding the selection.
 
+## Sorting
+
+The filter row carries a sort `<select>` beside search and the genre filter. Each
+option is one comparator in the `SORTS` map in `popup.js`:
+
+| Option | Orders by |
+|---|---|
+| ★ Rating | `rating` descending — the default, and what the list did before the control existed |
+| New first | `behindBy(c)` descending, ties broken by rating |
+| Recent | `lastVisited` descending |
+| A–Z | `title` via `localeCompare` |
+
+`behindBy(c)` counts chapters published past the furthest one **read**, not past
+the last one acknowledged. Acknowledging dismisses the "New chapters" notice; it
+does not mean the chapter was read, so a library sorted by "New first" would
+otherwise bury exactly what you were about to open. The same function drives the
+red `→ N` row badge, which is where that predicate used to be written out inline.
+
+The choice persists as `settings.popupSort`, written straight to
+`chrome.storage.local` like `settings.popupTheme` rather than through
+`SAVE_SETTINGS` — that handler re-runs `scheduleAlarms()`, which a display
+preference has no business doing. An unrecognised stored value falls back to
+`rating`.
+
+Sort, search and the genre filter all persist across the status tabs.
+
 ## Chapter History
 
 `renderChapterHistory(c)` renders chapters in reverse order (newest first) inside a 3-column grid.

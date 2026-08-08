@@ -160,14 +160,17 @@ Loaded by all three contexts, same as `urls.js`. → [[features-drop-status]]
 
 ## popup.js — popup UI
 
-State lives in module globals: `allComics`, `currentId`, `activeTab`, `activeStatus`.
+State lives in module globals: `allComics`, `currentId`, `activeTab`, `activeStatus`,
+`sortMode`.
 Detail-panel edits sit in `allComics` until Save, which is why `storage.onChanged`
 skips reloading while `currentId` is set.
 
 | Function | Does |
 |---|---|
 | `loadComics()` | Fetches all comics, then re-renders tabs, list, genre filter, datalist, notice |
-| `renderList()` | The comic rows: status tab, search and genre filter, sorted by rating |
+| `renderList()` | The comic rows: status tab, search and genre filter, ordered by the chosen `SORTS` comparator |
+| `behindBy(comic)` | Chapters published past the furthest one read; drives the red row badge and the "New first" sort |
+| `applySort()` / `saveSort(mode)` | Read and persist `settings.popupSort` |
 | `renderTabs()` | Builds one tab per `STATUSES` row with its count, binds their clicks → [[features-drop-status]] |
 | `renderUpdatesNotice()` | Unread banner with per-comic acknowledge buttons |
 | `renderGenreFilter()` / `updateGenreDatalist()` | Genre `<select>` and the input's autocomplete list |

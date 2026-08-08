@@ -179,6 +179,9 @@ body {
     color: var(--text);
 }
 .filters select { flex: 0 0 auto; min-width: 90px; }
+/* Two selects plus the search box in one row: the sort one carries short labels
+   and gets the narrower share. */
+.filters #sort { min-width: 78px; }
 
 /* ── Comic list ──────────────────────────────────────────────────────────── */
 .comic-list { max-height: 278px; overflow-y: auto; }

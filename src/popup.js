@@ -4,9 +4,25 @@ let allComics = {};
 let currentId = null;
 let activeTab = null;
 let activeStatus = STATUS_TRACKED; // which status tab the list is showing
+let sortMode = "rating";           // which SORTS comparator the list is using
 
 // STATUSES, isTracked() and statusMeta() live in status.js, loaded before this
 // file. statusMeta(c).id normalises a missing or unknown status to "tracked".
+
+// Chapters published past the furthest one read. Deliberately not the
+// acknowledged count: acknowledging dismisses the notice, it does not mean the
+// chapter was read, and a library sorted by "new first" should surface what is
+// unread rather than what is undismissed.
+const behindBy = (c) =>
+    isTracked(c) && c.latestChapter != null ? Math.max(0, c.latestChapter - (c.lastChapter ?? 0)) : 0;
+
+// Ties fall back to rating, so a list with nothing new still reads sensibly.
+const SORTS = {
+    rating: (a, b) => (b.rating ?? -1) - (a.rating ?? -1),
+    unread: (a, b) => behindBy(b) - behindBy(a) || (b.rating ?? -1) - (a.rating ?? -1),
+    recent: (a, b) => (b.lastVisited ?? "").localeCompare(a.lastVisited ?? ""),
+    title: (a, b) => a.title.localeCompare(b.title),
+};
 
 // ---------------------------------------------------------------------------
 // Init
@@ -15,6 +31,7 @@ let activeStatus = STATUS_TRACKED; // which status tab the list is showing
 document.addEventListener("DOMContentLoaded", async () => {
     [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
     await applyTheme();
+    await applySort();
     await loadComics();
     bindEvents();
     updateLastChecked();
@@ -73,6 +90,25 @@ async function toggleTheme() {
     document.getElementById("btn-theme").textContent = next === "light" ? "🌙" : "☀";
     const { settings = {} } = await chrome.storage.local.get("settings");
     await chrome.storage.local.set({ settings: { ...settings, popupTheme: next } });
+}
+
+// ---------------------------------------------------------------------------
+// Sort
+// ---------------------------------------------------------------------------
+
+// Persisted like popupTheme — written straight to storage rather than through
+// SAVE_SETTINGS, which would re-run scheduleAlarms() for a display preference.
+async function applySort() {
+    const { settings = {} } = await chrome.storage.local.get("settings");
+    sortMode = SORTS[settings.popupSort] ? settings.popupSort : "rating";
+    document.getElementById("sort").value = sortMode;
+}
+
+async function saveSort(mode) {
+    sortMode = mode;
+    renderList();
+    const { settings = {} } = await chrome.storage.local.get("settings");
+    await chrome.storage.local.set({ settings: { ...settings, popupSort: mode } });
 }
 
 // ---------------------------------------------------------------------------
@@ -241,7 +277,7 @@ function renderList() {
     let comics = Object.values(allComics).filter((c) => statusMeta(c).id === activeStatus);
     if (search) comics = comics.filter((c) => c.title.toLowerCase().includes(search));
     if (genre) comics = comics.filter((c) => c.genres?.includes(genre));
-    comics.sort((a, b) => (b.rating ?? -1) - (a.rating ?? -1));
+    comics.sort(SORTS[sortMode] ?? SORTS.rating);
 
     if (!comics.length) {
         const empty = search || genre
@@ -256,7 +292,7 @@ function renderList() {
     list.innerHTML = comics.map((c) => {
         const rating = c.rating ? `★${c.rating}` : "★";
         const lastCh = c.lastChapter != null ? `Ch ${c.lastChapter}` : "";
-        const newChBadge = isTracked(c) && c.latestChapter != null && c.latestChapter > (c.lastChapter ?? 0)
+        const newChBadge = behindBy(c) > 0
             ? ` <span class="badge-new">&#8594; ${c.latestChapter}</span>` : "";
         const age = c.lastVisited ? timeAgo(c.lastVisited) : "";
         const thumb = c.coverUrl ? `<img class="comic-thumb" src="${esc(c.coverUrl)}" alt="">` : "";
@@ -523,6 +559,7 @@ function bindEvents() {
 
     document.getElementById("search").addEventListener("input", renderList);
     document.getElementById("genre-filter").addEventListener("change", renderList);
+    document.getElementById("sort").addEventListener("change", (e) => saveSort(e.target.value));
 
     document.getElementById("detail-status").addEventListener("change", async (e) => {
         const next = e.target.value;

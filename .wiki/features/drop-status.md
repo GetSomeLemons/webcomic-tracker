@@ -114,4 +114,4 @@ writing that stored value runs concurrently and may not have landed yet.
   open, so the status selector reloads explicitly and re-opens the panel.
 - Changing status switches the popup to the tab the comic moved to. Without that
   the comic appears to vanish.
-- Genre filter and search persist across the tabs.
+- Genre filter, search and sort persist across the tabs.
