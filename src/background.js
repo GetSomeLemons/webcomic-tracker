@@ -102,6 +102,30 @@ function splitAddress(comic) {
     return { ...rest, ...address, ...(chapterSep && { chapterSep }) };
 }
 
+// Rewinding to chapter N keeps N and everything below it and drops what came
+// after. `to` of null means "back to the start" and keeps nothing.
+//
+// The cutoff is recorded on the comic (rewoundTo + rewoundAt) rather than just
+// applied, because merging is a union: without a marker the other profile's copy
+// hands every dropped chapter straight back on the next sync, exactly as it did
+// for deleted comics before tombstones. Chapters visited *after* the rewind
+// survive it — reading forward again is real progress, not a merge artifact.
+function applyRewind(comic, to, at) {
+    const kept = (comic.chapterHistory ?? []).filter(
+        (h) => (to != null && h.chapter <= to) || (h.visitedAt ?? "") > at
+    );
+    // Seeded with the cutoff, so "I am at chapter N" holds even when N was never
+    // logged — the user asserting a position is as good a source as a visit.
+    const top = kept.reduce((m, h) => Math.max(m, h.chapter), to ?? -1);
+    return {
+        ...comic,
+        rewoundTo: to,
+        rewoundAt: at,
+        chapterHistory: kept.sort((x, y) => x.chapter - y.chapter),
+        lastChapter: top < 0 ? null : top,
+    };
+}
+
 // Field-level merge of two copies of the same comic. Used both when two
 // old-style ids collapse onto one stable id, and on every Gist sync, where the
 // two copies are two browser profiles that each read some chapters.
@@ -124,7 +148,11 @@ function mergeComics(a, b) {
     // follows its own timestamp. Otherwise reading one chapter in another profile
     // would silently undo a drop.
     const statusSide = (a.statusChangedAt ?? "") >= (b.statusChangedAt ?? "") ? a : b;
-    return {
+    // Like status, a rewind is a deliberate act with its own timestamp: the most
+    // recent one wins and is re-applied below, after the union has put back the
+    // very chapters it removed.
+    const rewound = (a.rewoundAt ?? "") >= (b.rewoundAt ?? "") ? a : b;
+    const merged = {
         ...a, ...b, ...newer,
         lastChapter: Math.max(a.lastChapter ?? 0, b.lastChapter ?? 0),
         lastVisited: newer.lastVisited,
@@ -136,7 +164,10 @@ function mergeComics(a, b) {
         statusChangedAt: statusSide.statusChangedAt ?? null,
         coverUrl: newer.coverUrl ?? a.coverUrl ?? b.coverUrl ?? null,
         addedAt: [a.addedAt, b.addedAt].filter(Boolean).sort()[0] ?? null,
+        rewoundTo: rewound.rewoundAt ? rewound.rewoundTo ?? null : null,
+        rewoundAt: rewound.rewoundAt ?? null,
     };
+    return merged.rewoundAt ? applyRewind(merged, merged.rewoundTo, merged.rewoundAt) : merged;
 }
 
 migrateComics().catch((e) => console.warn("Comic migration failed:", e.message));
@@ -832,12 +863,17 @@ async function handleMessage(msg) {
             return { ok: true };
         }
         case "REWIND_COMIC": {
-            const { comics = {} } = await chrome.storage.local.get("comics");
-            if (!comics[msg.id]) return { ok: false };
-            const ch = msg.chapter ?? null;
-            comics[msg.id].lastChapter = ch;
-            comics[msg.id].chapterHistory = ch != null ? [{ chapter: ch, visitedAt: new Date().toISOString() }] : [];
-            await chrome.storage.local.set({ comics });
+            // Through the lock like every other writer: a bare read-modify-write
+            // here lost the rewind to whatever update check happened to be
+            // writing in the same window.
+            const ok = await withComicsLock(async () => {
+                const { comics = {} } = await chrome.storage.local.get("comics");
+                if (!comics[msg.id]) return false;
+                comics[msg.id] = applyRewind(comics[msg.id], msg.chapter ?? null, new Date().toISOString());
+                await chrome.storage.local.set({ comics });
+                return true;
+            });
+            if (!ok) return { ok: false };
             await updateBadge();
             queueGistSync();
             return { ok: true };

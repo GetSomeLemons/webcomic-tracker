@@ -482,7 +482,8 @@ function bindEvents() {
         const val = document.getElementById("rewind-input").value.trim();
         const ch = val === "" ? null : parseInt(val, 10);
         if (val !== "" && (isNaN(ch) || ch < 0)) return;
-        if (!confirm(`Reset "${allComics[currentId].title}" to Ch ${ch ?? "start"}? This clears all chapter history.`)) return;
+        const scope = ch != null ? `This clears every chapter after ${ch}.` : "This clears all chapter history.";
+        if (!confirm(`Reset "${allComics[currentId].title}" to Ch ${ch ?? "start"}? ${scope}`)) return;
         await chrome.runtime.sendMessage({ type: "REWIND_COMIC", id: currentId, chapter: ch });
         document.getElementById("rewind-input").value = "";
         await loadComics();

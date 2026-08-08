@@ -82,6 +82,7 @@ field by field:
 | `acknowledgedChapter` | highest |
 | `status` | from whichever side changed it most recently (`statusChangedAt`) |
 | `addedAt` | earliest |
+| `rewoundTo`, `rewoundAt` | from whichever side rewound most recently (`rewoundAt`) |
 | `rating`, `review`, `genres`, `coverUrl` | from the most recently visited side |
 
 Whole-object "newest wins" is wrong here, which is what an earlier version did:
@@ -114,6 +115,27 @@ as the payload's `deleted` map. A tombstone suppresses the comic unless its
 afterwards and counts as re-added. Tombstones are pruned after 30 days, or as soon
 as the id no longer resolves to a comic.
 
+### Rewinds
+
+Same problem as deletions, one level down: `chapterHistory` merges as a union and
+`lastChapter` as a max, so a rewind that lowered both was handed straight back by
+the other side's copy on the next sync. The symptom was that a rewind looked
+correct in the popup and was gone after a reload, since `syncToGist()` adopts its
+own merge result locally.
+
+`applyRewind()` records the cutoff on the comic (`rewoundTo`, `rewoundAt`) instead
+of only applying it. `mergeComics()` takes the most recent of the two cutoffs and
+re-applies it *after* the union, dropping the chapters the union put back.
+
+A chapter whose `visitedAt` is newer than `rewoundAt` survives the cutoff — that is
+someone reading forward again after the rewind, in either profile, and it moves
+`lastChapter` back up. Without that exception the marker would keep deleting real
+progress for as long as it stayed on the comic.
+
+Unlike tombstones, rewind markers are not pruned: they are one small field pair on
+a comic that already exists, and a stale one is harmless once every remaining
+chapter post-dates it.
+
 ### Coalesced pushes
 
 `queueGistSync()` is the entry point, not `syncToGist()` directly. A push already
@@ -135,3 +157,8 @@ one always reflects the final state.
   or pull reconciles, because merging is order-independent and idempotent.
 - The merge cannot detect a genuinely conflicting edit to `review` or `rating`
   made in two profiles between syncs. The most recently visited side wins.
+- A rewind survives the merge by chapter timestamps, so it can only spare reads
+  that left a `chapterHistory` entry. That is every ordinary read — `applyUpsert()`
+  logs or re-stamps one for each visited chapter — but a bare `lastChapter` above
+  the cutoff with no matching entry (pre-1.5 data, or an update-check result) is
+  capped to the cutoff rather than kept.

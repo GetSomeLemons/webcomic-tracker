@@ -38,6 +38,21 @@ The list above the panel is split into **Tracked** and **Dropped** tabs
   "carry on from here" target.
 - The "Latest" row below the grid shows the scraped latest chapter with an Open button - this only appears when `c.latestChapter > c.lastChapter`.
 
+### Rewind
+
+The `Ch #` input plus `Rewind` button below the grid sends `REWIND_COMIC`, which
+moves the reading position back to that chapter. It drops the chapters *after* the
+one entered and keeps the ones at or below it; an empty input rewinds to the start
+and clears the history entirely. Until 1.6.1 it wiped the whole history whatever
+you typed, then re-seeded it with a single entry for the chapter you picked.
+
+The cutoff is stored on the comic as `rewoundTo` + `rewoundAt` and re-applied on
+every merge — without that marker the Gist copy handed the dropped chapters back
+on the next sync. See `gist-sync.md` → Rewinds.
+
+`acknowledgedChapter` is deliberately left alone: rewinding your reading position
+does not un-see an update notification, so the badge does not light up again.
+
 ## Genres
 
 Tags are stored as strings in `c.genres[]`. Display and input normalise to **Title Case** via `toTitleCase()`.
