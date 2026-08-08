@@ -9,7 +9,10 @@ A Manifest V3 browser extension for Chrome and Edge. Tracks webcomics you're rea
 - **Chapter history**: logs every chapter you read with timestamps
 - **Update checks**: poll for new chapters manually or on a schedule
 - **Ratings and genres**: rate 1-10, tag with custom genres, write a review
+- **Reading status**: tracked, on hold, plan, completed or dropped — parked comics keep their history but stop demanding attention
+- **Sorting**: order the list by rating, new chapters first, recently read, or A–Z
 - **Gist sync**: backs up your list to a private GitHub Gist, syncs across devices
+- **JSON backup**: export the library to a file and merge one back, no GitHub account needed
 - **Dark mode**: CSS-filter toggle per tab or globally
 - **Key bindings**: bind keyboard keys to page elements (e.g. `]` for "Next chapter")
 - **Badge**: extension icon shows unread chapter count
@@ -43,6 +46,10 @@ Click **Check for updates** in the popup footer. For automatic checks, go to **S
 3. Repeat on other devices with the same token.
 
 Data goes to a **private** Gist you own. The token stays in browser local storage; use a minimal-scope token.
+
+### Backup without GitHub
+
+Open the popup → **⚙ Settings** → **Backup**. **Export JSON** downloads the whole library as a file; **Import JSON…** merges one back in. Import never wipes what you already have, but a deletion recorded in the file does travel — the same rule Gist sync follows.
 
 ### Keyboard element binding
 

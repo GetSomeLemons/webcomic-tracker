@@ -52,6 +52,43 @@ The Gist contains one file, `webcomic-tracker.json`:
 `githubPat`, `gistId`, and `gistEtag` are not included; they are the sync
 credentials and cache state themselves.
 
+`buildPayload(settings, comics, deleted)` produces this document, and everything
+that writes one calls it: the push, the Gist seed created by `gistInit()`, and the
+local export below. One shape, so a downloaded file and the Gist file are
+interchangeable.
+
+## Local export / import
+
+The options page can write the same document to a file and read one back, for
+anyone who does not want a GitHub account — or who wants a copy on disk before an
+experiment.
+
+| Message | Does |
+|---|---|
+| `EXPORT_DATA` | Returns `{ payload }` straight from `buildPayload()` |
+| `IMPORT_DATA { data }` | Merges a parsed file into the library, returns `{ ok, count }` |
+
+Export builds a `Blob`, hands it to a `<a download>` and revokes the object URL.
+An extension page can do that unaided, so the feature costs **no permission** — in
+particular not `downloads`.
+
+Import is the same merge a pull performs: `mergeComicMaps(data.comics, local,
+tombstones)` followed by `adoptMerged()`, which re-merges inside the write lock.
+So an import **adds and reconciles, it never replaces** — a comic read further
+locally keeps its position, and nothing outside the file is lost. Two consequences
+worth stating plainly:
+
+- A tombstone in the file **can** remove a local comic, exactly as one arriving
+  over the Gist can. That is what makes a deletion travel, and it is why the
+  options page says "merges", not "adds".
+- `adoptMerged()` is called with a null etag. The library now holds comics the
+  Gist has not seen, so the next pull has to read the remote in full instead of
+  short-circuiting on a 304.
+
+A push is queued afterwards, so an import in one profile reaches the others.
+Rejected without touching storage: a file that is not JSON, and one whose `comics`
+is missing or not an object.
+
 ## When sync runs
 
 | Trigger | Direction |

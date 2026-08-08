@@ -122,6 +122,7 @@ Loaded by all three contexts, same as `urls.js`. → [[features-drop-status]]
 |---|---|
 | `queueGistSync()` | Coalesces pushes; re-runs once if a write landed mid-push. **The entry point — not `syncToGist`** |
 | `syncToGist()` | Read-merge-write. Skips the push entirely if the read failed |
+| `buildPayload(settings, comics, deleted)` | The Gist document — also the exported file and the `gistInit` seed. Credentials excluded |
 | `pullFromGist()` | Conditional GET via etag, merge, adopt |
 | `adoptMerged(comics, tombs, etag)` | Stores a merge result, re-merging against current storage inside the lock |
 | `fetchGist(settings, etag)` | GET the gist; `{unchanged:true}` on 304 |
@@ -192,6 +193,8 @@ skips reloading while `currentId` is set.
 | Function | Does |
 |---|---|
 | `showGistLink(gistId)` | Reveals the gist.github.com link after a successful connect |
-| `setStatus(id, msg, cls)` | Writes one of the two inline status lines |
+| `setStatus(id, msg, cls)` | Writes one of the inline status lines |
 
-Connect sends `GIST_INIT`, Save sends `SAVE_SETTINGS`; both are inline listeners.
+Connect sends `GIST_INIT`, Save sends `SAVE_SETTINGS`, Export sends `EXPORT_DATA`
+and downloads the result as a Blob, Import parses the chosen file and sends
+`IMPORT_DATA`; all are inline listeners. → [[features-gist-sync]]

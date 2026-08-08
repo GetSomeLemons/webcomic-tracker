@@ -676,6 +676,22 @@ async function adoptMerged(mergedComics, tombstones, etag) {
     return count;
 }
 
+// The Gist file and a locally exported file are the same document, so both are
+// built here. githubPat, gistId and gistEtag stay out on purpose: a credential
+// and one profile's cache have no business travelling with the library.
+function buildPayload(settings, comics, deleted) {
+    return {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        settings: {
+            darkModeGlobal: settings.darkModeGlobal,
+            updateAlarmMinutes: settings.updateAlarmMinutes,
+        },
+        comics,
+        deleted,
+    };
+}
+
 // Read-merge-write. A blind PATCH of the local library was erasing whatever
 // another profile had pushed since this profile last pulled — the reason reading
 // in profile A never showed up in profile B.
@@ -704,13 +720,7 @@ async function syncToGist() {
             body: JSON.stringify({
                 files: {
                     [GIST_FILENAME]: {
-                        content: JSON.stringify({
-                            version: 1,
-                            exportedAt: new Date().toISOString(),
-                            settings: { darkModeGlobal: settings.darkModeGlobal, updateAlarmMinutes: settings.updateAlarmMinutes },
-                            comics: mergedComics,
-                            deleted: prunedTombs,
-                        }),
+                        content: JSON.stringify(buildPayload(settings, mergedComics, prunedTombs)),
                     },
                 },
             }),
@@ -758,7 +768,9 @@ async function gistInit(pat) {
     const existing = list.find((g) => g.description === GIST_DESCRIPTION && g.files?.[GIST_FILENAME]);
     if (existing) return existing.id;
     const { comics = {} } = await chrome.storage.local.get("comics");
-    const payload = JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), settings: {}, comics });
+    // No settings yet — this runs before the PAT is stored — so the seed carries
+    // the library alone. JSON.stringify drops the undefined settings fields.
+    const payload = JSON.stringify(buildPayload({}, comics, {}));
     const createRes = await fetch("https://api.github.com/gists", {
         method: "POST",
         headers,
@@ -903,6 +915,30 @@ async function handleMessage(msg) {
         }
         case "PULL_FROM_GIST":
             return await pullFromGist();
+        case "EXPORT_DATA": {
+            const { settings = {}, comics = {}, deletedComics = {} } =
+                await chrome.storage.local.get(["settings", "comics", "deletedComics"]);
+            return { ok: true, payload: buildPayload(settings, comics, deletedComics) };
+        }
+        case "IMPORT_DATA": {
+            const incoming = msg.data?.comics;
+            if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
+                return { ok: false, error: "not a tracker backup" };
+            }
+            const { comics = {}, deletedComics = {} } =
+                await chrome.storage.local.get(["comics", "deletedComics"]);
+            // The same merge a pull does: an import adds and reconciles, it never
+            // replaces. A tombstone in the file can still remove a local comic —
+            // that is what makes a deletion travel, here as much as over the Gist.
+            const tombstones = { ...(msg.data.deleted ?? {}), ...deletedComics };
+            const merged = mergeComicMaps(incoming, comics, tombstones);
+            // Etag cleared: the library now holds comics the Gist has not seen, so
+            // the next pull must read the remote in full rather than take a 304.
+            const count = await adoptMerged(merged, pruneTombstones(tombstones, merged), null);
+            await updateBadge();
+            queueGistSync();
+            return { ok: true, count };
+        }
         case "PING":
             return { pong: true };
         case "DEBUG_INFO": {

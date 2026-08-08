@@ -128,6 +128,23 @@
         </div>
 
         <div class="section">
+            <div class="section-title">Backup</div>
+            <div class="field-group">
+                <div class="row">
+                    <button class="btn" id="btn-export">Export JSON</button>
+                    <button class="btn" id="btn-import">Import JSON…</button>
+                    <input type="file" id="import-file" accept="application/json,.json" style="display:none" />
+                </div>
+                <div class="help">
+                    A plain file copy of your library, in the same format as the Gist —
+                    no GitHub account needed. Import <strong>merges</strong> into what you
+                    already have; it never wipes it.
+                </div>
+                <div class="status" id="backup-status"></div>
+            </div>
+        </div>
+
+        <div class="section">
             <div class="section-title">Appearance</div>
             <div class="field-group">
                 <label class="checkbox-row">

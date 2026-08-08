@@ -61,6 +61,8 @@ All messages follow `{ type: string, ...payload }`.
 | popup | background | `SET_STATUS` | `{ ok, status }` — one of `STATUSES`, see drop-status |
 | options | background | `GIST_INIT` | `{ ok, gistId, error? }` |
 | options | background | `SAVE_SETTINGS` | `{ ok }` |
+| options | background | `EXPORT_DATA` | `{ ok, payload }` — the Gist document, see gist-sync |
+| options | background | `IMPORT_DATA` | `{ ok, count, error? }` — merges, never replaces |
 | popup | content (tab) | `TOGGLE_DARK` | `{ darkNow }` |
 
 `CHECK_UPDATES` takes `{ force }`. The popup sets it, because an explicit click
