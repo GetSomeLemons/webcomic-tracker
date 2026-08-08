@@ -17,12 +17,12 @@ The detail panel opens when a comic row is clicked. It shows rating, genres, rev
 
 ## Actions
 
-`Save` · `Drop`/`Restore` · `Remove`. The middle button flips label and tooltip on
-`isDropped(c)` and is the only way to change status — see `drop-status.md`. Save
-persists rating/genres/review only; it never changes status.
+`Save` · a status selector · `Remove`. The selector is built from `STATUSES` and is
+the only way to change status — see `drop-status.md`. Save persists
+rating/genres/review only; it never changes status.
 
-The list above the panel is split into **Tracked** and **Dropped** tabs
-(`renderTabs()`), each showing a count, with `activeStatus` holding the selection.
+The list above the panel is split into one tab per status (`renderTabs()`), each
+showing a count, with `activeStatus` holding the selection.
 
 ## Chapter History
 

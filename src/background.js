@@ -1,8 +1,10 @@
 // Service worker — ephemeral. All state lives in chrome.storage.local.
 
 // stableSlug / parseComicUrl / indexUrl / chapterUrl — shared with the content
-// script and the popup so all three build comic links the same way.
-importScripts("urls.js");
+// script and the popup so all three build comic links the same way. STATUSES /
+// isTracked / statusMeta are shared the same way, so all three name the same
+// reading statuses.
+importScripts("urls.js", "status.js");
 
 const GIST_DESCRIPTION = "webcomic-tracker-data";
 const GIST_FILENAME = "webcomic-tracker.json";
@@ -21,15 +23,6 @@ const TAB_FALLBACK_MAX = 3;
 const TAB_POLL_ATTEMPTS = 20;
 const TAB_POLL_INTERVAL_MS = 400;
 const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-
-// A comic is either actively tracked or dropped — read some of, but not enough
-// to keep up with. Dropped comics stay in the library with their history intact;
-// they are just excluded from update checks and the unread badge. Comics stored
-// before this existed have no status field, hence the fallback everywhere.
-const STATUS_TRACKED = "tracked";
-const STATUS_DROPPED = "dropped";
-
-const isDropped = (comic) => comic?.status === STATUS_DROPPED;
 
 // ---------------------------------------------------------------------------
 // Comics write lock
@@ -269,10 +262,11 @@ async function saveCurrentTab(tabId) {
     await upsertComic(scraped);
     queueGistSync();
     const label = scraped.chapter != null ? `${scraped.title} Ch ${scraped.chapter}` : scraped.title;
-    // Saving does not un-drop anything — say so, or the comic looks like it went
-    // missing when it does not reappear under Tracked.
+    // Saving never moves a comic back to tracked — say where it stayed, or it looks
+    // like it went missing when it does not reappear under Tracked.
     const { comics = {} } = await chrome.storage.local.get("comics");
-    sendToast(tabId, `Saved: ${label}${isDropped(comics[scraped.id]) ? " · still dropped" : ""}`);
+    const parked = comics[scraped.id] && !isTracked(comics[scraped.id]);
+    sendToast(tabId, `Saved: ${label}${parked ? ` · still ${statusMeta(comics[scraped.id]).label.toLowerCase()}` : ""}`);
     return scraped;
 }
 
@@ -412,7 +406,7 @@ async function runUpdateCheck({ force = false } = {}) {
         // ponytail: one Alt+S on the page converts such an entry properly; write a
         // migration only if there turn out to be many.
         if (!siteFor(c.site) || !c.slug || !indexUrl(c)) return false;
-        if (isDropped(c)) return false; // the whole point of dropping
+        if (!isTracked(c)) return false; // parked comics are the point of the feature
         if (force || !c.latestChecked) return true;
         return now - new Date(c.latestChecked).getTime() > FRESH_MS;
     });
@@ -501,7 +495,7 @@ function canonicalUrl(html) {
 async function updateBadge() {
     const { comics = {} } = await chrome.storage.local.get("comics");
     const unread = Object.values(comics).filter(
-        (c) => !isDropped(c) && c.latestChapter != null && c.latestChapter > (c.acknowledgedChapter ?? c.lastChapter ?? 0)
+        (c) => isTracked(c) && c.latestChapter != null && c.latestChapter > (c.acknowledgedChapter ?? c.lastChapter ?? 0)
     ).length;
     chrome.action.setBadgeText({ text: unread > 0 ? String(unread) : "" });
     if (unread > 0) chrome.action.setBadgeBackgroundColor({ color: "#e53935" });
@@ -879,8 +873,10 @@ async function handleMessage(msg) {
             return { ok: true };
         }
         case "SET_STATUS": {
-            const status = msg.status === STATUS_DROPPED ? STATUS_DROPPED : STATUS_TRACKED;
-            // Reading a dropped comic does not revive it — only this does. Picking up a
+            // Anything not in the table falls back to tracked rather than being stored:
+            // an unknown status would park a comic in a tab no version can show.
+            const status = STATUSES.some((s) => s.id === msg.status) ? msg.status : STATUS_TRACKED;
+            // Reading a parked comic does not revive it — only this does. Picking up a
             // chapter to see whether it got better should not silently re-subscribe you.
             await patchComic(msg.id, { status, statusChangedAt: new Date().toISOString() });
             await updateBadge();

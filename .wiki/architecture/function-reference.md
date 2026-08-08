@@ -4,7 +4,7 @@ title: Function Reference
 category: architecture
 tags: [reference, functions, map, entry-points]
 related: [architecture-extension-overview, concepts-site-adapters, features-gist-sync, features-popup-detail, features-drop-status, features-dark-mode]
-context_keys: [background.js, content.js, popup.js, urls.js, scrape.js, options.js]
+context_keys: [background.js, content.js, popup.js, urls.js, status.js, scrape.js, options.js]
 audience: [developer, ai]
 level: intermediate
 status: current
@@ -64,6 +64,15 @@ Loaded by all three contexts (`importScripts`, `content_scripts`, `<script>`).
 | `chapterUrl(comic, n)` | Chapter link; separator falls back stored → site default → `"/"` |
 | `lastReadChapter(comic)` | Newest history entry by `visitedAt` — where you left off, not the furthest read |
 
+## status.js — reading statuses
+
+Loaded by all three contexts, same as `urls.js`. → [[features-drop-status]]
+
+| Function | Does |
+|---|---|
+| `isTracked(comic)` | Is this comic actively followed? Missing or unknown status reads as tracked |
+| `statusMeta(comic)` | The comic's `STATUSES` row — `{ id, label, icon, accent }` — falling back to tracked |
+
 ## scrape.js — page scraping
 
 | Function | Does |
@@ -105,7 +114,7 @@ Loaded by all three contexts (`importScripts`, `content_scripts`, `<script>`).
 | `checkComicViaTab(comic)` | Fallback: background tab, poll the rendered DOM, close it. Capped per run |
 | `applyCheckResult(id, result)` | Writes latest/cover, and the new address only if `ownsAddress` agrees |
 | `setCheckProgress(p)` | Publishes progress to storage so the popup can render it |
-| `updateBadge()` | Unread count: `latestChapter > (acknowledgedChapter ?? lastChapter)`, dropped excluded |
+| `updateBadge()` | Unread count: `latestChapter > (acknowledgedChapter ?? lastChapter)`, parked comics excluded |
 
 ### Gist sync
 
@@ -127,7 +136,6 @@ Loaded by all three contexts (`importScripts`, `content_scripts`, `<script>`).
 | `saveCurrentTab(tabId)` | Alt+S path: message the content script, else inject `urls.js`+`scrape.js` and call `scrapeComic` |
 | `sendToast(tabId, msg)` | Fire-and-forget toast, errors swallowed |
 | `scheduleAlarms()` | Owns both alarms: `update-check` (gated on `autoUpdate`) and `gist-pull` (on whenever sync is set up) |
-| `isDropped(comic)` | `status === "dropped"`, tolerating pre-1.4 comics with no field |
 
 ## content.js — injected into pages
 
@@ -140,7 +148,7 @@ Loaded by all three contexts (`importScripts`, `content_scripts`, `<script>`).
 | `indexAddress()` | The parsed address, but only on an index page — the guard both index-only features share |
 | `checkIndexForUpdates()` | Reads latest chapter + cover + current slug off the rendered index page; sends only when something changed |
 | `latestChapterFromIndexDom(slug)` | Highest chapter number linked on the page |
-| `showStatusToast()` | "Tracked / Dropped · read up to Ch N · X new" on opening an index page |
+| `showStatusToast()` | "✓ Tracked · read up to Ch N · X new" on opening an index page; icon and accent from `statusMeta` |
 | `setupKeyBindings()` | Installs the per-hostname keydown handler; ignores input fields |
 | `saveBinding(hostname, b)` | Stores one binding, replacing any with the same key |
 | `keyStr(e)` | Keydown → `"Ctrl+Alt+]"` string. Same format on both write and read paths |
@@ -160,14 +168,14 @@ skips reloading while `currentId` is set.
 |---|---|
 | `loadComics()` | Fetches all comics, then re-renders tabs, list, genre filter, datalist, notice |
 | `renderList()` | The comic rows: status tab, search and genre filter, sorted by rating |
-| `renderTabs()` | Tracked/Dropped tab counts and active state → [[features-drop-status]] |
+| `renderTabs()` | Builds one tab per `STATUSES` row with its count, binds their clicks → [[features-drop-status]] |
 | `renderUpdatesNotice()` | Unread banner with per-comic acknowledge buttons |
 | `renderGenreFilter()` / `updateGenreDatalist()` | Genre `<select>` and the input's autocomplete list |
 | `showDetail(id)` / `hideDetail()` | Open and close the detail panel |
 | `renderChapterHistory(c)` | Chapter grid with derived links, "where you left off" marker, Latest row |
 | `renderRating(current)` | 1-10 buttons; click toggles, writes to `allComics` only |
 | `renderGenreTags(genres)` / `addGenre()` | Tag chips and Title Case add-with-dedupe |
-| `bindEvents()` | Every listener in the popup, including Track, Rewind, Drop, Check, Sync, Save, Remove |
+| `bindEvents()` | Every listener in the popup except the tabs', including Track, Rewind, status, Check, Sync, Save, Remove |
 | `renderProgress()` | Turns the Check button into a live `Checking n/m…` label |
 | `applyTheme()` / `toggleTheme()` | Popup light/dark, persisted as `settings.popupTheme` |
 | `showBindingsView()` / `hideBindingsView()` / `renderBindingsList(host)` / `deleteBinding(host, key)` | The key-bindings view for the active tab's hostname |

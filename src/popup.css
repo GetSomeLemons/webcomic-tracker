@@ -137,10 +137,16 @@ body {
 .tabs {
     display: flex;
     border-bottom: 1px solid var(--border);
+    /* Five statuses do not fit the popup width, so the strip scrolls sideways
+       rather than squeezing "Completed" into an ellipsis. */
+    overflow-x: auto;
+    scrollbar-width: none;
 }
+.tabs::-webkit-scrollbar { display: none; }
 .tab {
-    flex: 1;
-    padding: 7px 4px;
+    flex: 0 0 auto;
+    padding: 7px 10px;
+    white-space: nowrap;
     background: none;
     border: none;
     border-bottom: 2px solid transparent;
@@ -362,9 +368,13 @@ textarea {
 }
 .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
 
-/* Dropped rows read as de-emphasised without becoming unreadable. */
-.comic-row--dropped .comic-title { color: var(--text-muted); }
-.comic-row--dropped .comic-thumb { opacity: 0.5; }
+/* The status selector sits in the action row and matches the buttons beside it. */
+select.btn-secondary { font-family: inherit; }
+
+/* Parked rows — anything not tracked — read as de-emphasised without becoming
+   unreadable. */
+.comic-row--parked .comic-title { color: var(--text-muted); }
+.comic-row--parked .comic-thumb { opacity: 0.5; }
 
 /* ── Track button ────────────────────────────────────────────────────────── */
 .btn-track {

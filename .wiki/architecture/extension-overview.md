@@ -26,14 +26,16 @@ Webcomic Tracker is a Manifest V3 browser extension for Chrome and Edge. It save
 | `popup.js` | Popup UI: comic list, genre filter, detail/edit panel |
 | `options.js` | Settings page: GitHub PAT, sync init, update interval |
 | `urls.js` | The `SITES` table plus comic addresses: `parseComicUrl`, `comicId`, `siteFor`, `stableSlug`, `indexUrl`, `chapterUrl`, `lastReadChapter` |
+| `status.js` | The `STATUSES` table plus `isTracked`, `statusMeta` |
 
 Every top-level function in these files is listed one line each in
 [[architecture-function-reference]], along with a map from "what I want to change"
 to the function that owns it. Start there rather than opening `background.js`.
 
-`urls.js` is loaded by all three contexts — `importScripts` in the service
-worker, first entry in the `content_scripts` array, and a `<script>` before
-`popup.js` — so links are built the same way everywhere.
+`urls.js` and `status.js` are loaded by all three contexts — `importScripts` in
+the service worker, first entries in the `content_scripts` array, and `<script>`
+tags before `popup.js` — so links are built and statuses named the same way
+everywhere. Both are tables plus pure helpers; neither runs anything on load.
 
 `scrape.js` is split out of `content.js` so the service worker can inject it as a
 file when the content script is missing (see the fallback in `saveCurrentTab`),
@@ -56,7 +58,7 @@ All messages follow `{ type: string, ...payload }`.
 | popup | background | `REMOVE_COMIC` | `{ ok }` |
 | popup | background | `CHECK_UPDATES` | `{ started }` — returns at once, see below |
 | popup | background | `PULL_FROM_GIST` | `{ ok, count? , unchanged?, error? }` |
-| popup | background | `SET_STATUS` | `{ ok, status }` — tracked/dropped, see drop-status |
+| popup | background | `SET_STATUS` | `{ ok, status }` — one of `STATUSES`, see drop-status |
 | options | background | `GIST_INIT` | `{ ok, gistId, error? }` |
 | options | background | `SAVE_SETTINGS` | `{ ok }` |
 | popup | content (tab) | `TOGGLE_DARK` | `{ darkNow }` |
@@ -102,7 +104,7 @@ edits live in the popup's `allComics` until Save, and a reload would drop them.
       latestChapter: 192,      // from update check
       latestChecked,
       acknowledgedChapter,     // dismisses the badge up to this chapter
-      status: "tracked",       // or "dropped"; absent on pre-1.4 data = tracked
+      status: "tracked",       // any STATUSES id; absent or unknown = tracked
       statusChangedAt,         // merge key for status; see drop-status
       rating: null,            // 1-10
       review: "",
@@ -171,7 +173,7 @@ already there.
 ```
 chrome.alarms "update-check" (60 min, only if settings.autoUpdate === true)
   → runUpdateCheck()
-  → skip dropped comics, comics on unsupported sites, comics with no split
+  → skip parked (non-tracked) comics, comics on unsupported sites, comics with no split
     address, and any whose latestChecked is under 6 h old (unless force)
   → pass 1: fetch(index) for 5 comics at a time
             → extractLatestChapter(html)   // text parsing, no DOM

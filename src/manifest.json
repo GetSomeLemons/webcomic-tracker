@@ -19,7 +19,7 @@
     "content_scripts": [
         {
             "matches": ["<all_urls>"],
-            "js": ["urls.js", "scrape.js", "content.js"],
+            "js": ["urls.js", "status.js", "scrape.js", "content.js"],
             "run_at": "document_idle"
         }
     ],

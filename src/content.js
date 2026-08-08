@@ -325,15 +325,17 @@ async function showStatusToast() {
     if (!comic) return;
 
     const read = comic.lastChapter != null ? `read up to Ch ${comic.lastChapter}` : "nothing read yet";
-    if (comic.status === "dropped") {
-        showToast(`⏹ Dropped · ${read}`, "#ff6b6b");
+    const status = statusMeta(comic);
+    if (!isTracked(comic)) {
+        showToast(`${status.icon} ${status.label} · ${read}`, status.accent);
         return;
     }
     // Prefer the count from the page in front of us over the stored one, which the
-    // concurrent index check may not have refreshed yet.
+    // concurrent index check may not have refreshed yet. Only tracked comics get the
+    // count — a parked one is not something you are behind on.
     const latest = latestChapterFromIndexDom(addr.slug) ?? comic.latestChapter;
     const behind = latest != null ? latest - (comic.lastChapter ?? 0) : 0;
-    showToast(`✓ Tracked · ${read}${behind > 0 ? ` · ${behind} new` : ""}`, "#4a9eff");
+    showToast(`${status.icon} ${status.label} · ${read}${behind > 0 ? ` · ${behind} new` : ""}`, status.accent);
 }
 
 // ---------------------------------------------------------------------------
