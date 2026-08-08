@@ -7,6 +7,7 @@ Map from code areas to documentation articles.
 | Article | Covers |
 |---------|--------|
 | `extension-overview.md` | MV3 architecture, file roles, message protocol, data model, comic addresses (urlRoot + slug) |
+| `function-reference.md` | Every top-level function, one line each, plus a "to change X, touch Y" map and the entry points |
 
 ## features/
 

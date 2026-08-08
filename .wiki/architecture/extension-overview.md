@@ -3,7 +3,7 @@ id: architecture-extension-overview
 title: Extension Architecture Overview
 category: architecture
 tags: [mv3, architecture, service-worker, content-script, storage]
-related: [features-dark-mode, features-gist-sync, concepts-site-adapters]
+related: [architecture-function-reference, features-dark-mode, features-gist-sync, concepts-site-adapters]
 context_keys: [manifest.json, background.js, content.js, scrape.js, urls.js, popup.js, options.js]
 audience: [developer, ai]
 level: intermediate
@@ -26,6 +26,10 @@ Webcomic Tracker is a Manifest V3 browser extension for Chrome and Edge. It save
 | `popup.js` | Popup UI: comic list, genre filter, detail/edit panel |
 | `options.js` | Settings page: GitHub PAT, sync init, update interval |
 | `urls.js` | The `SITES` table plus comic addresses: `parseComicUrl`, `comicId`, `siteFor`, `stableSlug`, `indexUrl`, `chapterUrl`, `lastReadChapter` |
+
+Every top-level function in these files is listed one line each in
+[[architecture-function-reference]], along with a map from "what I want to change"
+to the function that owns it. Start there rather than opening `background.js`.
 
 `urls.js` is loaded by all three contexts — `importScripts` in the service
 worker, first entry in the `content_scripts` array, and a `<script>` before
