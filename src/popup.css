@@ -53,7 +53,9 @@ body[data-theme="light"] {
 *, *::before, *::after { box-sizing: border-box; }
 
 body {
-    width: 380px;
+    /* Wide enough for the five status tabs and the three filter controls to sit
+       on their own rows without either wrapping or scrolling. */
+    width: 420px;
     font-family: system-ui, sans-serif;
     font-size: 13px;
     margin: 0;
@@ -145,7 +147,7 @@ body {
 .tabs::-webkit-scrollbar { display: none; }
 .tab {
     flex: 0 0 auto;
-    padding: 7px 10px;
+    padding: 7px 8px;
     white-space: nowrap;
     background: none;
     border: none;
@@ -170,18 +172,22 @@ body {
     border-bottom: 1px solid var(--border);
 }
 .filters input, .filters select {
-    flex: 1;
     padding: 4px 8px;
     border: 1px solid var(--border);
     border-radius: 4px;
     font-size: 12px;
     background: var(--surface);
     color: var(--text);
+    /* A select is as wide as its longest option unless told otherwise, and a
+       flex item will not shrink below that either. One long genre name used to
+       push this row past the popup width, which turned into a horizontal
+       scrollbar under the whole popup. Both zeroed, so the row divides the space
+       it has instead of demanding more. */
+    min-width: 0;
 }
-.filters select { flex: 0 0 auto; min-width: 90px; }
-/* Two selects plus the search box in one row: the sort one carries short labels
-   and gets the narrower share. */
-.filters #sort { min-width: 78px; }
+/* Search earns twice the share of either select. */
+.filters input { flex: 2 1 0; }
+.filters select { flex: 1 1 0; }
 
 /* ── Comic list ──────────────────────────────────────────────────────────── */
 .comic-list { max-height: 278px; overflow-y: auto; }

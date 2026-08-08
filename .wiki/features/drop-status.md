@@ -100,9 +100,11 @@ writing that stored value runs concurrently and may not have landed yet.
 
 ## Gotchas
 
-- Five tabs do not fit the popup width, so `.tabs` scrolls sideways
-  (`overflow-x: auto`, scrollbar hidden) and `.tab` is `flex: 0 0 auto`. Going
-  back to `flex: 1` truncates the longer labels.
+- The popup body is `420px` partly to fit five tabs on one row; it was `380px`
+  when there were two. `.tabs` still scrolls sideways (`overflow-x: auto`,
+  scrollbar hidden) with `.tab` at `flex: 0 0 auto`, as a safety net for long
+  labels and three-digit counts. Going back to `flex: 1` truncates the longer
+  labels instead.
 - `renderTabs()` rebuilds its buttons on every call, so the click listeners are
   bound there and not in `bindEvents()` — a one-time binding would be lost on the
   first re-render.

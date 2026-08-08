@@ -50,6 +50,11 @@ preference has no business doing. An unrecognised stored value falls back to
 
 Sort, search and the genre filter all persist across the status tabs.
 
+The three controls share one row, so both selects carry `min-width: 0` and a
+shrinkable `flex` basis. A `<select>` is otherwise as wide as its longest option
+and a flex item will not shrink past that, so a single long genre name pushed the
+row wider than the popup and put a horizontal scrollbar under everything.
+
 ## Chapter History
 
 `renderChapterHistory(c)` renders chapters in reverse order (newest first) inside a 3-column grid.
