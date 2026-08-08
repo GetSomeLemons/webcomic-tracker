@@ -274,7 +274,7 @@ async function autoTrack() {
 // background fetch of the same URL.
 function latestChapterFromIndexDom(slug) {
     const nums = [...document.querySelectorAll(`a[href*="${slug}"]`)]
-        .map((a) => { const m = a.href.match(/\/chapter[-/](\d+)/i); return m ? parseInt(m[1], 10) : null; })
+        .map((a) => { const m = a.href.match(/\/chapter[-/](\d+(?:\.\d+)?)/i); return m ? parseFloat(m[1]) : null; })
         .filter((n) => n !== null);
     return nums.length ? Math.max(...nums) : null;
 }

@@ -480,7 +480,7 @@ function bindEvents() {
     document.getElementById("btn-setup-sync").addEventListener("click", () => chrome.runtime.openOptionsPage());
     document.getElementById("btn-rewind").addEventListener("click", async () => {
         const val = document.getElementById("rewind-input").value.trim();
-        const ch = val === "" ? null : parseInt(val, 10);
+        const ch = val === "" ? null : parseFloat(val);
         if (val !== "" && (isNaN(ch) || ch < 0)) return;
         const scope = ch != null ? `This clears every chapter after ${ch}.` : "This clears all chapter history.";
         if (!confirm(`Reset "${allComics[currentId].title}" to Ch ${ch ?? "start"}? ${scope}`)) return;

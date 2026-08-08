@@ -36,7 +36,14 @@ link builders and the update check are all generic over that table.
 origin / pathType / slug [ /chapter<sep><n> ] [ trailing slash ]
 ```
 
-One anchored regex per site covers both the index page and a chapter page.
+One anchored regex per site covers both the index page and a chapter page. The
+chapter number is matched as `\d+(?:\.\d+)?` and parsed with `parseFloat`, because
+bonus and side chapters are numbered `chapter-88.5`; parsing one as `88` would mark
+the real chapter 88 as read and hide it. Every consumer — `Math.max` on
+`lastChapter`, the `chapterHistory` sort, the `byChapter` map in `mergeComics()`,
+`applyRewind()`'s cutoff — is numeric-generic and needed no change. Integers keep
+serialising as integers, so stored data is untouched.
+
 `parseComicUrl()` returns `{ site, urlRoot, slug, chapterSep, chapter }` — plain
 JSON, because that value crosses `chrome.runtime.sendMessage` (which serializes
 as JSON, so a descriptor with a `RegExp` field would arrive as `{}`) and lands in
@@ -65,8 +72,6 @@ and `splitAddress()` in `background.js` both narrow the parse explicitly —
 
 ## Known gaps
 
-- Chapter numbers are parsed with `parseInt` everywhere, so a decimal chapter
-  (`chapter-88.5`) truncates. Neither supported site uses them.
 - `extractLatestChapter()`'s href fallback is not scoped to the comic's own slug,
   so another series' chapter link on a series page would inflate the result.
   Neither supported site cross-links that way.

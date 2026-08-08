@@ -45,7 +45,10 @@ for (const s of SITES) {
     s.origin = `https://${s.host}`;
     s.re = new RegExp(
         `^https?://(?:www\\.)?${s.host.replace(/\./g, "\\.")}` +
-        `/(${s.pathType})/([^/?#]+)(?:/chapter([/-])(\\d+))?/?(?:[?#]|$)`, "i");
+        // A chapter number is a decimal, not an integer. Bonus and side chapters are
+        // numbered "chapter-88.5" across this corner of the web; parsing one as 88
+        // would mark the real 88 as read and hide it.
+        `/(${s.pathType})/([^/?#]+)(?:/chapter([/-])(\\d+(?:\\.\\d+)?))?/?(?:[?#]|$)`, "i");
 }
 
 const siteFor = (host) => SITES.find((s) => s.host === host) ?? null;
@@ -66,7 +69,7 @@ function parseComicUrl(url) {
             urlRoot: `${site.origin}/${m[1]}`,
             slug: m[2],
             chapterSep: m[3] ?? null,
-            chapter: m[4] ? parseInt(m[4], 10) : null,
+            chapter: m[4] ? parseFloat(m[4]) : null,
         };
     }
     return null;

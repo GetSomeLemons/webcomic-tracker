@@ -544,7 +544,7 @@ async function checkComicViaTab(comic) {
                     target: { tabId },
                     func: (s) => {
                         const nums = [...document.querySelectorAll(`a[href*="${s}"]`)]
-                            .map((a) => { const m = a.href.match(/\/chapter[-/](\d+)/i); return m ? parseInt(m[1], 10) : null; })
+                            .map((a) => { const m = a.href.match(/\/chapter[-/](\d+(?:\.\d+)?)/i); return m ? parseFloat(m[1]) : null; })
                             .filter((n) => n !== null);
                         const coverUrl = document.querySelector('meta[property="og:image"]')?.content ?? null;
                         return { latestChapter: nums.length ? Math.max(...nums) : null, coverUrl, pageUrl: location.href };
@@ -580,7 +580,7 @@ function extractLatestChapter(html) {
             for (const list of [pp?.chapters, pp?.data?.chapters, pp?.comic?.chapters, pp?.post?.chapters]) {
                 if (!Array.isArray(list) || !list.length) continue;
                 const nums = list
-                    .map((c) => parseInt(c.chapter_number ?? c.number ?? c.chapter ?? c.slug, 10))
+                    .map((c) => parseFloat(c.chapter_number ?? c.number ?? c.chapter ?? c.slug))
                     .filter((n) => n > 0);
                 if (nums.length) return Math.max(...nums);
             }
@@ -589,7 +589,7 @@ function extractLatestChapter(html) {
 
     // Fallback: highest chapter number linked anywhere on the page. Scoped to href
     // attributes so prose like "chapter 5 was great" cannot inflate the result.
-    const nums = [...html.matchAll(/href="[^"]*chapter[-/](\d+)/gi)].map((m) => parseInt(m[1], 10));
+    const nums = [...html.matchAll(/href="[^"]*chapter[-/](\d+(?:\.\d+)?)/gi)].map((m) => parseFloat(m[1]));
     return nums.length ? Math.max(...nums) : null;
 }
 
