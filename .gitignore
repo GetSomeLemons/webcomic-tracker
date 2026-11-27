@@ -1,8 +1,0 @@
-node_modules/
-dist/
-.env
-*.token
-.claude/settings.local.json
-.devcontainer
-.claude
-CLAUDE.md
