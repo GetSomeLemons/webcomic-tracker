@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <title>Webcomic Tracker — Recommendations</title>
+        <style>
+            /* Same palette as popup.css; the light override follows the popup's theme setting. */
+            body {
+                --bg: #1a1a1e;
+                --surface: #26262c;
+                --border: #3a3a46;
+                --text: #e8e8ee;
+                --text-muted: #8a8a96;
+                --accent: #4a9eff;
+                --accent-hover: #2d86ff;
+                --accent-light: rgba(74,158,255,.15);
+                --danger: #ff6b6b;
+            }
+            body[data-theme="light"] {
+                --bg: #ffffff;
+                --surface: #f5f5f7;
+                --border: #e0e0e0;
+                --text: #111111;
+                --text-muted: #666666;
+                --accent: #1a73e8;
+                --accent-hover: #0d5cb6;
+                --accent-light: #e8f0fe;
+                --danger: #cc0000;
+            }
+            * { box-sizing: border-box; }
+            body {
+                font-family: system-ui, sans-serif; font-size: 13px;
+                max-width: 760px; margin: 0 auto; padding: 32px 20px;
+                background: var(--bg); color: var(--text);
+            }
+            header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+            h1 { font-size: 18px; margin: 0; }
+            .muted { color: var(--text-muted); font-size: 12px; margin: 6px 0 0; min-height: 16px; }
+            #errors { color: var(--danger); font-size: 12px; margin-top: 6px; }
+            .btn {
+                padding: 7px 16px; border-radius: 5px; font-size: 13px; cursor: pointer;
+                border: 1px solid var(--accent); background: var(--accent);
+                color: #fff; font-weight: 500;
+            }
+            .btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+            .btn:disabled { opacity: .5; cursor: default; }
+            .list { list-style: none; padding: 0; margin: 20px 0 0; display: grid; gap: 10px; }
+            .card {
+                display: flex; gap: 12px; padding: 10px;
+                background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+            }
+            .cover { width: 64px; height: 90px; flex: none; object-fit: cover; border-radius: 4px; background: var(--border); }
+            .body { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+            .title { color: var(--text); font-weight: 600; font-size: 14px; text-decoration: none; }
+            .title:hover { color: var(--accent); }
+            .site { color: var(--text-muted); font-size: 11px; }
+            .reasons { font-size: 12px; }
+            .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+            .chip { font-size: 10px; padding: 1px 6px; border-radius: 9px; background: var(--accent-light); color: var(--accent); }
+            .empty { color: var(--text-muted); padding: 20px 0; }
+        </style>
+    </head>
+    <body>
+        <header>
+            <h1>Recommendations</h1>
+            <button class="btn" id="btn-build">Refresh</button>
+        </header>
+        <p class="muted" id="summary"></p>
+        <p class="muted" id="taste"></p>
+        <div id="errors"></div>
+        <ol class="list" id="list"></ol>
+
+        <script src="urls.js"></script>
+        <script src="asura.js"></script>
+        <script src="recommendations.js"></script>
+    </body>
+</html>
